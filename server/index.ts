@@ -110,8 +110,7 @@ const allowedOrigins = [
 
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction && !PLACES_API_KEY) {
-  console.error('[FamPals API] PLACES_API_KEY is required in production.');
-  process.exit(1);
+  console.warn('[FamPals API] PLACES_API_KEY is missing in production; places endpoints will remain unavailable until GOOGLE_PLACES_API_KEY or PLACES_API_KEY is configured.');
 }
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
@@ -2275,37 +2274,19 @@ app.post('/api/user/data-deletion', requireAuth, async (req: AuthenticatedReques
   }
 });
 
-// In production, serve the built frontend
-if (isProduction) {
-  // Prefer dist relative to compiled server output (dist-server/../dist)
-  const distPath = path.resolve(__dirname, '..', 'dist');
-  console.log(`[FamPals API] Serving static files from: ${distPath}`);
-  console.log(`[FamPals API] Current working directory: ${process.cwd()}`);
-  
-  // Check if dist folder exists
-  if (fs.existsSync(distPath)) {
-    console.log(`[FamPals API] dist folder found, serving static files`);
-    // Serve static files
-    app.use(express.static(distPath));
-    
-    // Handle client-side routing - serve index.html for all non-API routes
-    app.get(/.*/, (req, res) => {
-      if (!req.path.startsWith('/api/')) {
-        res.sendFile(path.join(distPath, 'index.html'));
-      }
-    });
-  } else {
-    console.warn(`[FamPals API] WARNING: dist folder not found at ${distPath}`);
-    try {
-      console.log(`[FamPals API] Directory contents:`, fs.readdirSync(process.cwd()));
-    } catch (err) {
-      console.warn('[FamPals API] Unable to read working directory contents:', err);
-    }
-  }
-}
-
 const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
+
+// Serve Vite build in production
+if (isProduction) {
+  const distPath = path.join(__dirname, '../dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get(/.*/, (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+}
 
 // Start server immediately to satisfy Cloud Run health checks
 const server = app.listen(Number(PORT), HOST, () => {
