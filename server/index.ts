@@ -12,6 +12,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { GoogleAuth } from 'google-auth-library';
 import { getExploreIntentDefinition, type ExploreIntentId } from './exploreIntentConfig.js';
+import { closePostgresPool, isPostgresEnabled, pgHealthCheck, pgQuery } from './postgres.js';
 
 const require = createRequire(import.meta.url);
 const cors = require('cors/lib/index.js') as (options?: CorsOptions | CorsOptionsDelegate<Request>) => express.RequestHandler;
@@ -68,6 +69,26 @@ console.log('[FamPals API] NODE_ENV:', process.env.NODE_ENV);
 interface AuthenticatedRequest extends Request {
   uid?: string;
 }
+
+type PostgresPlaceClaimRow = {
+  id: string;
+  place_id: string;
+  user_id: string;
+  status: string;
+  business_role: string | null;
+  business_email: string | null;
+  business_phone: string | null;
+  verification_method: string | null;
+  verification_evidence: unknown;
+  rejection_reason: string | null;
+  reviewed_by: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  reviewed_at: Date | string | null;
+  place_name?: string | null;
+  user_email?: string | null;
+  user_display_name?: string | null;
+};
 
 function isAdminAccessUser(userData: Record<string, any> | undefined): boolean {
   if (!userData) return false;
@@ -282,6 +303,108 @@ try {
 } catch (err) {
   console.error('[FamPals API] Firebase Admin init error:', err);
   process.exit(1);
+}
+
+function parsePgJson<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  if (typeof value === 'object') {
+    return value as T;
+  }
+  return fallback;
+}
+
+function toIsoString(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+async function ensurePostgresUser(userId: string): Promise<{ email: string; displayName: string | null }> {
+  const userRecord = await adminAuth.getUser(userId);
+  await pgQuery(
+    `
+      insert into users (id, email, display_name, photo_url, updated_at)
+      values ($1, $2, $3, $4, now())
+      on conflict (id) do update
+      set email = excluded.email,
+          display_name = coalesce(excluded.display_name, users.display_name),
+          photo_url = coalesce(excluded.photo_url, users.photo_url),
+          updated_at = now()
+    `,
+    [userId, userRecord.email || null, userRecord.displayName || null, userRecord.photoURL || null],
+  );
+  return {
+    email: userRecord.email || '',
+    displayName: userRecord.displayName || null,
+  };
+}
+
+async function ensurePostgresPlace(placeId: string, placeName: string): Promise<void> {
+  await pgQuery(
+    `
+      insert into places (id, name, owner_status, raw, created_at, updated_at)
+      values ($1, $2, 'none', '{}'::jsonb, now(), now())
+      on conflict (id) do update
+      set name = coalesce(nullif(excluded.name, ''), places.name),
+          updated_at = now()
+    `,
+    [placeId, placeName || null],
+  );
+}
+
+function mapPostgresPlaceClaim(row: PostgresPlaceClaimRow) {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    placeId: row.place_id,
+    placeName: row.place_name || raw.placeName || '',
+    userId: row.user_id,
+    userEmail: row.user_email || raw.userEmail || '',
+    userDisplayName: row.user_display_name || raw.userDisplayName || '',
+    status: row.status,
+    businessRole: row.business_role,
+    businessEmail: row.business_email,
+    businessPhone: row.business_phone,
+    verificationMethod: row.verification_method || 'manual',
+    verificationEvidence: parsePgJson(row.verification_evidence, {}),
+    rejectionReason: row.rejection_reason || undefined,
+    reviewedBy: row.reviewed_by || undefined,
+    createdAt: toIsoString(row.created_at),
+    reviewedAt: toIsoString(row.reviewed_at),
+  };
+}
+
+async function getPostgresPlaceClaimById(claimId: string): Promise<PostgresPlaceClaimRow | null> {
+  const result = await pgQuery<PostgresPlaceClaimRow>(
+    `
+      select
+        pc.*,
+        p.name as place_name,
+        u.email as user_email,
+        u.display_name as user_display_name
+      from place_claims pc
+      left join places p on p.id = pc.place_id
+      left join users u on u.id = pc.user_id
+      where pc.id = $1
+      limit 1
+    `,
+    [claimId],
+  );
+  return result.rows[0] || null;
+}
+
+async function isAdminUserViaFirestore(userId: string): Promise<boolean> {
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.data();
+  return userData?.isAdmin === true || isAdminAccessUser(userData as Record<string, any> | undefined);
 }
 // Middleware to verify Firebase Auth token
 async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -885,11 +1008,13 @@ function verifyPaystackSignature(rawBody: Buffer, signature: string): boolean {
   return hash === signature;
 }
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     placesConfigured: PLACES_CONFIGURED,
+    postgresEnabled: isPostgresEnabled,
+    postgresReady: isPostgresEnabled ? await pgHealthCheck() : false,
     nodeEnv: process.env.NODE_ENV || 'development',
   });
 });
@@ -1854,6 +1979,62 @@ app.post('/api/place-claims', requireAuth, async (req: AuthenticatedRequest, res
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    if (isPostgresEnabled) {
+      await ensurePostgresPlace(placeId, placeName);
+      const userRecord = await ensurePostgresUser(userId);
+
+      const existing = await pgQuery<{ exists: number }>(
+        `select 1 as exists from place_claims where place_id = $1 and user_id = $2 and status = 'pending' limit 1`,
+        [placeId, userId],
+      );
+      if (existing.rowCount) {
+        return res.status(409).json({ error: 'You already have a pending claim for this place' });
+      }
+
+      const verifiedExisting = await pgQuery<{ exists: number }>(
+        `select 1 as exists from place_claims where place_id = $1 and status = 'verified' limit 1`,
+        [placeId],
+      );
+      if (verifiedExisting.rowCount) {
+        return res.status(409).json({ error: 'This place already has a verified owner' });
+      }
+
+      const claimId = crypto.randomUUID();
+      await pgQuery(
+        `
+          insert into place_claims (
+            id, place_id, user_id, status, business_role, business_email, business_phone,
+            verification_method, verification_evidence, raw, created_at
+          )
+          values ($1, $2, $3, 'pending', $4, $5, $6, $7, $8::jsonb, $9::jsonb, now())
+        `,
+        [
+          claimId,
+          placeId,
+          userId,
+          businessRole,
+          businessEmail || null,
+          businessPhone || null,
+          verificationMethod || 'manual',
+          JSON.stringify(verificationEvidence),
+          JSON.stringify({
+            placeName,
+            userEmail: userRecord.email,
+            userDisplayName: userRecord.displayName || '',
+            source: 'postgres',
+          }),
+        ],
+      );
+
+      await pgQuery(
+        `update places set owner_status = 'pending', updated_at = now() where id = $1`,
+        [placeId],
+      );
+
+      console.log(`[FamPals API] Place claim submitted via Postgres: ${claimId} for place ${placeId} by ${userId}`);
+      return res.json({ success: true, claimId });
+    }
+
     const existing = await db.collection('placeClaims')
       .where('placeId', '==', placeId)
       .where('userId', '==', userId)
@@ -1907,6 +2088,26 @@ app.post('/api/place-claims', requireAuth, async (req: AuthenticatedRequest, res
 app.get('/api/place-claims/my-claims', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.uid!;
+
+    if (isPostgresEnabled) {
+      const result = await pgQuery<PostgresPlaceClaimRow>(
+        `
+          select
+            pc.*,
+            p.name as place_name,
+            u.email as user_email,
+            u.display_name as user_display_name
+          from place_claims pc
+          left join places p on p.id = pc.place_id
+          left join users u on u.id = pc.user_id
+          where pc.user_id = $1
+          order by pc.created_at desc
+        `,
+        [userId],
+      );
+      return res.json({ claims: result.rows.map(mapPostgresPlaceClaim) });
+    }
+
     const snapshot = await db.collection('placeClaims')
       .where('userId', '==', userId)
       .orderBy('createdAt', 'desc')
@@ -1933,6 +2134,29 @@ app.get('/api/place-claims/place/:placeId', requireAuth, async (req: Authenticat
     const { placeId } = req.params;
     const userId = req.uid!;
 
+    if (isPostgresEnabled) {
+      const result = await pgQuery<PostgresPlaceClaimRow>(
+        `
+          select
+            pc.*,
+            p.name as place_name,
+            u.email as user_email,
+            u.display_name as user_display_name
+          from place_claims pc
+          left join places p on p.id = pc.place_id
+          left join users u on u.id = pc.user_id
+          where pc.place_id = $1 and pc.user_id = $2
+          order by pc.created_at desc
+          limit 1
+        `,
+        [placeId, userId],
+      );
+      if (!result.rowCount) {
+        return res.json({ claim: null });
+      }
+      return res.json({ claim: mapPostgresPlaceClaim(result.rows[0]) });
+    }
+
     const snapshot = await db.collection('placeClaims')
       .where('placeId', '==', placeId)
       .where('userId', '==', userId)
@@ -1954,13 +2178,32 @@ app.get('/api/place-claims/place/:placeId', requireAuth, async (req: Authenticat
 app.get('/api/admin/place-claims', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.uid!;
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.data();
-    if (!userData?.isAdmin) {
+    if (!(await isAdminUserViaFirestore(userId))) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
     const status = (req.query.status as string) || 'pending';
+
+    if (isPostgresEnabled) {
+      const result = await pgQuery<PostgresPlaceClaimRow>(
+        `
+          select
+            pc.*,
+            p.name as place_name,
+            u.email as user_email,
+            u.display_name as user_display_name
+          from place_claims pc
+          left join places p on p.id = pc.place_id
+          left join users u on u.id = pc.user_id
+          where pc.status = $1
+          order by pc.created_at desc
+          limit 50
+        `,
+        [status],
+      );
+      return res.json({ claims: result.rows.map(mapPostgresPlaceClaim) });
+    }
+
     const snapshot = await db.collection('placeClaims')
       .where('status', '==', status)
       .orderBy('createdAt', 'desc')
@@ -1986,9 +2229,7 @@ app.get('/api/admin/place-claims', requireAuth, async (req: AuthenticatedRequest
 app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const adminUserId = req.uid!;
-    const userDoc = await db.collection('users').doc(adminUserId).get();
-    const userData = userDoc.data();
-    if (!userData?.isAdmin) {
+    if (!(await isAdminUserViaFirestore(adminUserId))) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -1997,6 +2238,78 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
 
     if (!['verify', 'reject'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    if (isPostgresEnabled) {
+      const claimData = await getPostgresPlaceClaimById(claimId);
+      if (!claimData) {
+        return res.status(404).json({ error: 'Claim not found' });
+      }
+
+      if (action === 'verify') {
+        await pgQuery(
+          `
+            update place_claims
+            set status = 'verified',
+                reviewed_at = now(),
+                reviewed_by = $2
+            where id = $1
+          `,
+          [claimId, adminUserId],
+        );
+
+        await pgQuery(
+          `
+            update places
+            set owner_status = 'verified',
+                owner_tier = 'free',
+                owner_ids = case
+                  when $2 = any(coalesce(owner_ids, '{}'::text[])) then coalesce(owner_ids, '{}'::text[])
+                  else array_append(coalesce(owner_ids, '{}'::text[]), $2)
+                end,
+                updated_at = now()
+            where id = $1
+          `,
+          [claimData.place_id, claimData.user_id],
+        );
+
+        await pgQuery(
+          `
+            insert into place_owner_profiles (
+              id, place_id, user_id, tier, owner_content, raw, verified_at, last_updated_at
+            )
+            values ($1, $2, $3, 'free', '{}'::jsonb, '{}'::jsonb, now(), now())
+            on conflict (place_id, user_id) do update
+            set tier = excluded.tier,
+                verified_at = excluded.verified_at,
+                last_updated_at = excluded.last_updated_at
+          `,
+          [`${claimData.place_id}_${claimData.user_id}`, claimData.place_id, claimData.user_id],
+        );
+
+        console.log(`[FamPals API] Claim ${claimId} verified in Postgres for place ${claimData.place_id}`);
+      } else {
+        await pgQuery(
+          `
+            update place_claims
+            set status = 'rejected',
+                rejection_reason = $2,
+                reviewed_at = now(),
+                reviewed_by = $3
+            where id = $1
+          `,
+          [claimId, rejectionReason || 'Insufficient evidence', adminUserId],
+        );
+
+        await pgQuery(
+          `update places set owner_status = 'none', updated_at = now() where id = $1`,
+          [claimData.place_id],
+        );
+
+        console.log(`[FamPals API] Claim ${claimId} rejected in Postgres for place ${claimData.place_id}`);
+      }
+
+      return res.json({ success: true, status: action === 'verify' ? 'verified' : 'rejected' });
     }
 
     const claimRef = db.collection('placeClaims').doc(claimId);
@@ -2061,6 +2374,30 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
 app.get('/api/place-owner/:placeId', async (req: Request, res: Response) => {
   try {
     const placeId = req.params.placeId as string;
+
+    if (isPostgresEnabled) {
+      const result = await pgQuery<{
+        owner_status: string | null;
+        owner_tier: string | null;
+        owner_content: unknown;
+        raw: unknown;
+      }>(
+        `select owner_status, owner_tier, owner_content, raw from places where id = $1 limit 1`,
+        [placeId],
+      );
+      if (!result.rowCount) {
+        return res.json({ ownerStatus: 'none', ownerContent: null });
+      }
+      const row = result.rows[0];
+      const raw = parsePgJson<Record<string, any>>(row.raw, {});
+      return res.json({
+        ownerStatus: row.owner_status || 'none',
+        ownerTier: row.owner_tier || null,
+        ownerContent: parsePgJson(row.owner_content, null),
+        promotedUntil: raw.promotedUntil || null,
+      });
+    }
+
     const placeDoc = await db.collection('places').doc(placeId).get();
 
     if (!placeDoc.exists) {
@@ -2085,6 +2422,52 @@ app.put('/api/place-owner/:placeId/content', requireAuth, async (req: Authentica
     const userId = req.uid!;
     const placeId = req.params.placeId as string;
     const { ownerContent } = req.body;
+
+    if (isPostgresEnabled) {
+      const result = await pgQuery<{
+        owner_ids: string[] | null;
+        owner_tier: string | null;
+      }>(
+        `select owner_ids, owner_tier from places where id = $1 limit 1`,
+        [placeId],
+      );
+      if (!result.rowCount) {
+        return res.status(404).json({ error: 'Place not found' });
+      }
+
+      const placeRow = result.rows[0];
+      const ownerIds = placeRow.owner_ids || [];
+      if (!ownerIds.includes(userId)) {
+        return res.status(403).json({ error: 'You are not a verified owner of this place' });
+      }
+
+      const tier = placeRow.owner_tier || 'free';
+      const sanitized = { ...ownerContent };
+      if (tier === 'free') {
+        delete sanitized.specialOffers;
+        delete sanitized.events;
+        delete sanitized.photos;
+      }
+
+      await ensurePostgresUser(userId);
+      await pgQuery(
+        `update places set owner_content = $2::jsonb, updated_at = now() where id = $1`,
+        [placeId, JSON.stringify(sanitized)],
+      );
+      await pgQuery(
+        `
+          insert into place_owner_profiles (id, place_id, user_id, owner_content, last_updated_at)
+          values ($1, $2, $3, $4::jsonb, now())
+          on conflict (place_id, user_id) do update
+          set owner_content = excluded.owner_content,
+              last_updated_at = excluded.last_updated_at
+        `,
+        [`${placeId}_${userId}`, placeId, userId, JSON.stringify(sanitized)],
+      );
+
+      console.log(`[FamPals API] Owner content updated in Postgres for place ${placeId} by ${userId}`);
+      return res.json({ success: true, ownerContent: sanitized });
+    }
 
     const placeDoc = await db.collection('places').doc(placeId).get();
     if (!placeDoc.exists) {
@@ -2236,6 +2619,35 @@ app.post('/api/paystack/verify-business', requireAuth, async (req: Authenticated
         paystack_subscription_code: data.data.subscription_code || null,
       }, { merge: true });
 
+      if (isPostgresEnabled) {
+        await ensurePostgresUser(userId);
+        await ensurePostgresPlace(placeId, '');
+        await pgQuery(
+          `
+            update places
+            set owner_tier = 'business_pro',
+                raw = jsonb_set(coalesce(raw, '{}'::jsonb), '{promotedUntil}', to_jsonb($2::text), true),
+                updated_at = now()
+            where id = $1
+          `,
+          [placeId, endDate.toISOString()],
+        );
+        await pgQuery(
+          `
+            insert into place_owner_profiles (
+              id, place_id, user_id, tier, paystack_reference, paystack_subscription_code, last_updated_at
+            )
+            values ($1, $2, $3, 'business_pro', $4, $5, now())
+            on conflict (place_id, user_id) do update
+            set tier = excluded.tier,
+                paystack_reference = excluded.paystack_reference,
+                paystack_subscription_code = excluded.paystack_subscription_code,
+                last_updated_at = excluded.last_updated_at
+          `,
+          [profileId, placeId, userId, reference, data.data.subscription_code || null],
+        );
+      }
+
       console.log(`[FamPals API] Business Pro activated for place ${placeId}`);
     }
 
@@ -2305,7 +2717,10 @@ server.on('error', (err) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('[FamPals API] SIGTERM received, shutting down gracefully');
-  server.close(() => {
+  server.close(async () => {
+    await closePostgresPool().catch((err) => {
+      console.warn('[FamPals API] Failed to close Postgres pool cleanly:', err);
+    });
     console.log('[FamPals API] Server closed');
     process.exit(0);
   });
