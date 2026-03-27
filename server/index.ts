@@ -90,6 +90,41 @@ type PostgresPlaceClaimRow = {
   user_display_name?: string | null;
 };
 
+type PostgresUserRow = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  photo_url: string | null;
+  role: string | null;
+  is_admin: boolean;
+  unlimited_credits: boolean;
+  profile: unknown;
+  entitlement: unknown;
+  partner_link: unknown;
+  settings: unknown;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type PostgresSavedPlaceRow = {
+  place_id: string;
+  saved_at: Date | string | null;
+  payload: unknown;
+  place_name: string | null;
+  formatted_address: string | null;
+  rating: number | null;
+  place_raw: unknown;
+};
+
+const CLIENT_WRITABLE_ENTITLEMENT_KEYS = new Set([
+  'gemini_credits_used',
+  'gemini_credits_limit',
+  'usage_reset_month',
+  'ai_requests_this_month',
+  'ai_requests_reset_date',
+]);
+
 function isAdminAccessUser(userData: Record<string, any> | undefined): boolean {
   if (!userData) return false;
   const role = typeof userData.role === 'string' ? userData.role.toLowerCase() : '';
@@ -320,11 +355,136 @@ function parsePgJson<T>(value: unknown, fallback: T): T {
   return fallback;
 }
 
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => stripUndefinedDeep(entry))
+      .filter((entry) => entry !== undefined);
+  }
+  if (isRecord(value)) {
+    if (typeof value.toDate === 'function') {
+      try {
+        return value.toDate().toISOString();
+      } catch {
+        return undefined;
+      }
+    }
+    if (typeof value.toMillis === 'function') {
+      try {
+        return new Date(value.toMillis()).toISOString();
+      } catch {
+        return undefined;
+      }
+    }
+    const cleaned: Record<string, unknown> = {};
+    Object.entries(value).forEach(([key, entry]) => {
+      const next = stripUndefinedDeep(entry);
+      if (next !== undefined) {
+        cleaned[key] = next;
+      }
+    });
+    return cleaned;
+  }
+  return value;
+}
+
+function mergeNestedRecord(base: Record<string, any>, patch: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = { ...base };
+  Object.entries(patch).forEach(([key, value]) => {
+    if (value === undefined) {
+      delete result[key];
+      return;
+    }
+    if (isRecord(value) && isRecord(result[key])) {
+      result[key] = mergeNestedRecord(result[key], value);
+      return;
+    }
+    result[key] = value;
+  });
+  return result;
+}
+
+function sanitizeClientEntitlementPatch(value: unknown): Record<string, any> {
+  if (!isRecord(value)) return {};
+  const patch: Record<string, any> = {};
+  Object.entries(value).forEach(([key, entry]) => {
+    if (!CLIENT_WRITABLE_ENTITLEMENT_KEYS.has(key)) return;
+    const cleaned = stripUndefinedDeep(entry);
+    if (cleaned !== undefined) {
+      patch[key] = cleaned;
+    }
+  });
+  return patch;
+}
+
+function mapPostgresUserState(row: PostgresUserRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  const settings = parsePgJson<Record<string, any>>(row.settings, {});
+  const entitlement = parsePgJson<Record<string, any>>(row.entitlement, {});
+  const partnerLink = parsePgJson<Record<string, any>>(row.partner_link, {});
+  const profile = parsePgJson<Record<string, any>>(row.profile, {});
+
+  const response: Record<string, any> = { ...raw };
+  if (Object.keys(settings.userPreferences || {}).length > 0) {
+    response.userPreferences = settings.userPreferences;
+  }
+  if (Object.keys(entitlement).length > 0) {
+    response.entitlement = entitlement;
+  }
+  if (Object.keys(partnerLink).length > 0) {
+    response.partnerLink = partnerLink;
+  }
+  if (Object.keys(profile).length > 0) {
+    response.profile = profile;
+  }
+  if (row.role) {
+    response.role = row.role;
+  }
+  if (row.is_admin) {
+    response.isAdmin = true;
+  }
+  if (row.unlimited_credits) {
+    response.unlimited_credits = true;
+  }
+  return response;
+}
+
 function toIsoString(value: unknown): string | null {
   if (!value) return null;
   if (value instanceof Date) return value.toISOString();
   const parsed = new Date(String(value));
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+async function getPostgresUserRow(userId: string): Promise<PostgresUserRow | null> {
+  const result = await pgQuery<PostgresUserRow>(
+    `
+      select *
+      from users
+      where id = $1
+      limit 1
+    `,
+    [userId],
+  );
+  return result.rows[0] || null;
+}
+
+async function ensurePostgresUserRow(userId: string): Promise<PostgresUserRow> {
+  const existing = await getPostgresUserRow(userId);
+  if (existing) return existing;
+  await ensurePostgresUser(userId);
+  const created = await getPostgresUserRow(userId);
+  if (!created) {
+    throw new Error('postgres_user_upsert_failed');
+  }
+  return created;
 }
 
 async function ensurePostgresUser(userId: string): Promise<{ email: string; displayName: string | null }> {
@@ -358,6 +518,247 @@ async function ensurePostgresPlace(placeId: string, placeName: string): Promise<
     `,
     [placeId, placeName || null],
   );
+}
+
+async function loadUserState(userId: string): Promise<Record<string, any> | null> {
+  if (isPostgresEnabled) {
+    const row = await ensurePostgresUserRow(userId);
+    return mapPostgresUserState(row);
+  }
+
+  const userDoc = await db.collection('users').doc(userId).get();
+  if (!userDoc.exists) return null;
+  return userDoc.data() || null;
+}
+
+async function upsertUserProfileData(userId: string, profile: Record<string, any>): Promise<void> {
+  const cleanedProfile = stripUndefinedDeep(profile);
+  if (isPostgresEnabled) {
+    const currentRow = await ensurePostgresUserRow(userId);
+    const currentProfile = parsePgJson<Record<string, any>>(currentRow?.profile, {});
+    const currentRaw = parsePgJson<Record<string, any>>(currentRow?.raw, {});
+    const nextProfile = mergeNestedRecord(currentProfile, isRecord(cleanedProfile) ? cleanedProfile : {});
+    const nextRaw = {
+      ...currentRaw,
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    await pgQuery(
+      `
+        update users
+        set profile = $2::jsonb,
+            raw = $3::jsonb,
+            updated_at = now()
+        where id = $1
+      `,
+      [userId, JSON.stringify(nextProfile), JSON.stringify(nextRaw)],
+    );
+    return;
+  }
+
+  await db.collection('users').doc(userId).set({
+    profile: cleanedProfile || {},
+    lastLoginAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function saveUserFieldData(userId: string, key: string, value: unknown): Promise<void> {
+  const cleanedValue = key === 'entitlement'
+    ? sanitizeClientEntitlementPatch(value)
+    : stripUndefinedDeep(value);
+
+  if (isPostgresEnabled) {
+    const currentRow = await ensurePostgresUserRow(userId);
+    const nextProfile = parsePgJson<Record<string, any>>(currentRow?.profile, {});
+    const nextEntitlement = parsePgJson<Record<string, any>>(currentRow?.entitlement, {});
+    const nextPartnerLink = parsePgJson<Record<string, any>>(currentRow?.partner_link, {});
+    const nextSettings = parsePgJson<Record<string, any>>(currentRow?.settings, {});
+    const nextRaw = parsePgJson<Record<string, any>>(currentRow?.raw, {});
+
+    if (key === 'entitlement') {
+      const patch = isRecord(cleanedValue) ? cleanedValue : {};
+      Object.assign(nextEntitlement, mergeNestedRecord(nextEntitlement, patch));
+    } else if (key === 'partnerLink') {
+      const patch = isRecord(cleanedValue) ? cleanedValue : {};
+      Object.keys(nextPartnerLink).forEach((field) => delete nextPartnerLink[field]);
+      Object.assign(nextPartnerLink, patch);
+    } else if (key === 'userPreferences') {
+      const existingPrefs = isRecord(nextSettings.userPreferences) ? nextSettings.userPreferences : {};
+      if (cleanedValue === undefined) {
+        delete nextSettings.userPreferences;
+      } else if (isRecord(cleanedValue)) {
+        nextSettings.userPreferences = mergeNestedRecord(existingPrefs, cleanedValue);
+      } else {
+        nextSettings.userPreferences = cleanedValue;
+      }
+    } else if (key === 'profile') {
+      const patch = isRecord(cleanedValue) ? cleanedValue : {};
+      Object.assign(nextProfile, mergeNestedRecord(nextProfile, patch));
+    } else if (cleanedValue === undefined) {
+      delete nextRaw[key];
+    } else {
+      nextRaw[key] = cleanedValue;
+    }
+
+    await pgQuery(
+      `
+        update users
+        set profile = $2::jsonb,
+            entitlement = $3::jsonb,
+            partner_link = $4::jsonb,
+            settings = $5::jsonb,
+            raw = $6::jsonb,
+            updated_at = now()
+        where id = $1
+      `,
+      [
+        userId,
+        JSON.stringify(nextProfile),
+        JSON.stringify(nextEntitlement),
+        JSON.stringify(nextPartnerLink),
+        JSON.stringify(nextSettings),
+        JSON.stringify(nextRaw),
+      ],
+    );
+    return;
+  }
+
+  const payload: Record<string, any> = {};
+  payload[key] = cleanedValue === undefined ? FieldValue.delete() : cleanedValue;
+  await db.collection('users').doc(userId).set(payload, { merge: true });
+}
+
+function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> {
+  const payload = parsePgJson<Record<string, any>>(row.payload, {});
+  const placeRaw = parsePgJson<Record<string, any>>(row.place_raw, {});
+  return stripUndefinedDeep({
+    placeId: row.place_id,
+    name: payload.name || row.place_name || 'Saved place',
+    address: payload.address || row.formatted_address || '',
+    imageUrl: payload.imageUrl || placeRaw.photoUrl || null,
+    mapsUrl: payload.mapsUrl || placeRaw.mapsUrl || placeRaw.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${row.place_id}`,
+    rating: payload.rating ?? row.rating ?? placeRaw.rating,
+    priceLevel: payload.priceLevel || placeRaw.priceLevel,
+    tags: payload.tags || placeRaw.tags,
+    type: payload.type || placeRaw.type,
+    description: payload.description || placeRaw.description,
+    savedAt: toIsoString(row.saved_at),
+  }) as Record<string, any>;
+}
+
+async function listSavedPlaces(userId: string): Promise<Record<string, any>[]> {
+  if (isPostgresEnabled) {
+    await ensurePostgresUserRow(userId);
+    const result = await pgQuery<PostgresSavedPlaceRow>(
+      `
+        select
+          usp.place_id,
+          usp.saved_at,
+          usp.payload,
+          p.name as place_name,
+          p.formatted_address,
+          p.rating,
+          p.raw as place_raw
+        from user_saved_places usp
+        left join places p on p.id = usp.place_id
+        where usp.user_id = $1
+        order by usp.saved_at desc
+      `,
+      [userId],
+    );
+    return result.rows.map(mapPostgresSavedPlace);
+  }
+
+  const snap = await db.collection('users').doc(userId).collection('savedPlaces').get();
+  return snap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        placeId: data.placeId || docSnap.id,
+        ...data,
+      } as Record<string, any>;
+    })
+    .sort((a: Record<string, any>, b: Record<string, any>) => {
+      const aMs = toIsoString(a.savedAt) ? Date.parse(String(toIsoString(a.savedAt))) : 0;
+      const bMs = toIsoString(b.savedAt) ? Date.parse(String(toIsoString(b.savedAt))) : 0;
+      return bMs - aMs;
+    });
+}
+
+async function upsertSavedPlaceData(userId: string, place: Record<string, any>): Promise<void> {
+  const cleanedPlace = stripUndefinedDeep(place);
+  const placeId = typeof cleanedPlace === 'object' && cleanedPlace && 'placeId' in cleanedPlace
+    ? String((cleanedPlace as Record<string, any>).placeId || '').trim()
+    : '';
+  if (!placeId) {
+    throw new Error('place_id_required');
+  }
+
+  if (isPostgresEnabled) {
+    await ensurePostgresUserRow(userId);
+    const data = isRecord(cleanedPlace) ? cleanedPlace : {};
+    const placeRaw = stripUndefinedDeep({
+      photoUrl: data.imageUrl,
+      mapsUrl: data.mapsUrl,
+      priceLevel: data.priceLevel,
+      tags: data.tags,
+      type: data.type,
+      description: data.description,
+      rating: data.rating,
+    }) || {};
+    const savedAtIso = typeof data.savedAt === 'string'
+      ? data.savedAt
+      : toIsoString(data.savedAt) || new Date().toISOString();
+
+    await pgQuery(
+      `
+        insert into places (id, name, formatted_address, rating, owner_status, raw, created_at, updated_at)
+        values ($1, $2, $3, $4, 'none', $5::jsonb, now(), now())
+        on conflict (id) do update
+        set name = coalesce(excluded.name, places.name),
+            formatted_address = coalesce(excluded.formatted_address, places.formatted_address),
+            rating = coalesce(excluded.rating, places.rating),
+            raw = places.raw || excluded.raw,
+            updated_at = now()
+      `,
+      [
+        placeId,
+        typeof data.name === 'string' ? data.name : null,
+        typeof data.address === 'string' ? data.address : null,
+        typeof data.rating === 'number' ? data.rating : null,
+        JSON.stringify(placeRaw),
+      ],
+    );
+
+    await pgQuery(
+      `
+        insert into user_saved_places (user_id, place_id, payload, saved_at)
+        values ($1, $2, $3::jsonb, $4::timestamptz)
+        on conflict (user_id, place_id) do update
+        set payload = excluded.payload,
+            saved_at = excluded.saved_at
+      `,
+      [userId, placeId, JSON.stringify(data), savedAtIso],
+    );
+    return;
+  }
+
+  await db.collection('users').doc(userId).collection('savedPlaces').doc(placeId).set(cleanedPlace || {}, { merge: true });
+}
+
+async function deleteSavedPlaceData(userId: string, placeId: string): Promise<void> {
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        delete from user_saved_places
+        where user_id = $1 and place_id = $2
+      `,
+      [userId, placeId],
+    );
+    return;
+  }
+
+  await db.collection('users').doc(userId).collection('savedPlaces').doc(placeId).delete();
 }
 
 function mapPostgresPlaceClaim(row: PostgresPlaceClaimRow) {
@@ -2659,6 +3060,86 @@ app.post('/api/paystack/verify-business', requireAuth, async (req: Authenticated
 });
 
 const VALID_DELETION_CATEGORIES = ['saved_places', 'search_history', 'reviews_notes', 'profile_preferences', 'partner_circles'];
+
+app.get('/api/user/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const data = await loadUserState(userId);
+    return res.json({ data });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to load user state:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to load user state' });
+  }
+});
+
+app.put('/api/user/me/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const profile = isRecord(req.body?.profile) ? req.body.profile : {};
+    await upsertUserProfileData(userId, profile);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to save user profile:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save user profile' });
+  }
+});
+
+app.patch('/api/user/me/field', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+    if (!key) {
+      return res.status(400).json({ error: 'key is required' });
+    }
+    await saveUserFieldData(userId, key, req.body?.value);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to save user field:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save user field' });
+  }
+});
+
+app.get('/api/user/me/saved-places', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const savedPlaces = await listSavedPlaces(userId);
+    return res.json({ places: savedPlaces });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to load saved places:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to load saved places' });
+  }
+});
+
+app.put('/api/user/me/saved-places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const placeId = String(req.params.placeId || '').trim();
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const place = isRecord(req.body?.place) ? { ...req.body.place, placeId } : { placeId };
+    await upsertSavedPlaceData(userId, place);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to save saved place:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save saved place' });
+  }
+});
+
+app.delete('/api/user/me/saved-places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const placeId = String(req.params.placeId || '').trim();
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    await deleteSavedPlaceData(userId, placeId);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to delete saved place:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to delete saved place' });
+  }
+});
 
 app.post('/api/user/data-deletion', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {

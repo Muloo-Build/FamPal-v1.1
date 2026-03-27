@@ -1,6 +1,7 @@
-import { doc, setDoc, getDoc, updateDoc, deleteField } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { AppState, UserPreferences, SavedLocation, ExploreIntent, getDefaultEntitlement } from '../types';
+import { saveUserField } from './userData';
 
 const GUEST_PREFERENCES_KEY = 'fampals_guest_preferences';
 const DEBOUNCE_MS = 1500;
@@ -51,11 +52,10 @@ export async function loadUserProfile(userId: string): Promise<Partial<AppState>
 }
 
 export async function saveUserProfile(userId: string, data: Partial<AppState>): Promise<boolean> {
-  if (!db) return false;
-  
   try {
-    const userDocRef = doc(db, 'users', userId);
-    await setDoc(userDocRef, data, { merge: true });
+    await Promise.all(
+      Object.entries(data).map(([key, value]) => saveUserField(userId, key, value)),
+    );
     return true;
   } catch (error) {
     console.error('Failed to save user profile:', error);
@@ -106,19 +106,13 @@ export function updatePreferenceDebounced(
 
 async function flushPendingUpdates(): Promise<void> {
   const userId = auth?.currentUser?.uid;
-  if (!userId || !db || Object.keys(pendingUpdates).length === 0) {
+  if (!userId || Object.keys(pendingUpdates).length === 0) {
     pendingUpdates = {};
     return;
   }
   
   try {
-    const userDocRef = doc(db, 'users', userId);
-    // Use dot-path notation to merge into userPreferences without overwriting other fields
-    const dotPathUpdates: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(pendingUpdates)) {
-      dotPathUpdates[`userPreferences.${key}`] = value === undefined ? deleteField() : value;
-    }
-    await updateDoc(userDocRef, dotPathUpdates);
+    await saveUserField(userId, 'userPreferences', pendingUpdates);
     pendingUpdates = {};
   } catch (error) {
     console.error('Failed to flush preference updates:', error);

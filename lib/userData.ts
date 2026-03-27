@@ -1,50 +1,34 @@
-import { db, doc, onSnapshot, setDoc, deleteField, collection, deleteDoc } from './firebase';
+import { auth, db, doc, onSnapshot, setDoc, deleteField, collection, deleteDoc } from './firebase';
 import type { SavedPlace } from '../types';
 
 type Unsubscribe = () => void;
+
 const DEV_AUTH_BYPASS = import.meta.env.DEV && import.meta.env.VITE_AUTH_BYPASS === 'true';
-
-export function listenToUserDoc(uid: string, onData: (data: any | null) => void): Unsubscribe {
-  console.log('[FamPals] listenToUserDoc called for uid:', uid);
-  if (!db) {
-    console.error('[FamPals] listenToUserDoc: Firestore db is null/undefined!');
-    return () => {};
-  }
-  const userDocRef = doc(db, 'users', uid);
-  console.log('[FamPals] Setting up onSnapshot listener for user doc');
-  console.time(`listen:user:${uid}`);
-  const unsub = onSnapshot(userDocRef, (snap) => {
-    console.timeEnd(`listen:user:${uid}`);
-    console.log('[FamPals] User doc snapshot received, exists:', snap.exists());
-    if (snap.exists()) {
-      console.log('[FamPals] User doc data keys:', Object.keys(snap.data() || {}));
-      onData(snap.data());
-    } else {
-      console.log('[FamPals] User doc does not exist yet');
-      onData(null);
-    }
-  }, (err: any) => {
-    console.error('[FamPals] listenToUserDoc error:', err?.message || err, err?.code);
-    onData(null);
-  });
-
-  return () => {
-    unsub();
-  };
-}
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+const USER_SYNC_POLL_MS = 10000;
 
 function stripUndefined(value: any): any {
   if (value === undefined) return undefined;
   if (value === null) return null;
-  if (value instanceof Date) return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value && typeof value === 'object' && typeof value.toDate === 'function') {
+    try {
+      return value.toDate().toISOString();
+    } catch {
+      return undefined;
+    }
+  }
   if (value && typeof value === 'object' && typeof value.toMillis === 'function') {
-    return value;
+    try {
+      return new Date(value.toMillis()).toISOString();
+    } catch {
+      return undefined;
+    }
   }
   if (Array.isArray(value)) {
-    const cleaned = value
+    return value
       .map((item) => stripUndefined(item))
       .filter((item) => item !== undefined);
-    return cleaned;
   }
   if (typeof value === 'object') {
     const cleaned: Record<string, any> = {};
@@ -77,57 +61,180 @@ function sanitizeClientEntitlementPatch(value: any): Record<string, any> {
   return patch;
 }
 
+function shouldUseBackend(uid: string): boolean {
+  if (DEV_AUTH_BYPASS) return false;
+  if (!API_BASE) return false;
+  return auth?.currentUser?.uid === uid;
+}
+
+async function getAuthHeaders(uid: string): Promise<Record<string, string>> {
+  const currentUser = auth?.currentUser;
+  if (!currentUser || currentUser.uid !== uid) {
+    throw new Error('auth_user_unavailable');
+  }
+  const token = await currentUser.getIdToken();
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function apiRequest<T>(uid: string, path: string, init?: RequestInit): Promise<T> {
+  const headers = await getAuthHeaders(uid);
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...headers,
+      ...(init?.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `request_failed_${response.status}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return response.json() as Promise<T>;
+}
+
+function sortSavedPlaces(places: SavedPlace[]): SavedPlace[] {
+  const toMillis = (value: any) => {
+    if (!value) return 0;
+    if (typeof value === 'string') return Date.parse(value) || 0;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value.toMillis === 'function') return value.toMillis();
+    return 0;
+  };
+
+  return [...places].sort((a, b) => toMillis(b.savedAt) - toMillis(a.savedAt));
+}
+
+async function fetchUserState(uid: string): Promise<any | null> {
+  const payload = await apiRequest<{ data: any | null }>(uid, '/api/user/me');
+  return payload.data ?? null;
+}
+
+async function fetchSavedPlaces(uid: string): Promise<SavedPlace[]> {
+  const payload = await apiRequest<{ places: SavedPlace[] }>(uid, '/api/user/me/saved-places');
+  return sortSavedPlaces(payload.places || []);
+}
+
+function createPollingSubscription<T>(
+  loader: () => Promise<T>,
+  onData: (data: T) => void,
+  onErrorValue: T,
+): Unsubscribe {
+  let active = true;
+  let pollTimer: number | null = null;
+
+  const load = async () => {
+    try {
+      const data = await loader();
+      if (!active) return;
+      onData(data);
+    } catch (err) {
+      console.error('userData sync failed', err);
+      if (!active) return;
+      onData(onErrorValue);
+    }
+  };
+
+  void load();
+  pollTimer = window.setInterval(() => {
+    void load();
+  }, USER_SYNC_POLL_MS);
+
+  return () => {
+    active = false;
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+    }
+  };
+}
+
+export function listenToUserDoc(uid: string, onData: (data: any | null) => void): Unsubscribe {
+  if (shouldUseBackend(uid) && typeof window !== 'undefined') {
+    return createPollingSubscription(() => fetchUserState(uid), onData, null);
+  }
+
+  if (!db) {
+    onData(null);
+    return () => {};
+  }
+
+  const userDocRef = doc(db, 'users', uid);
+  const unsub = onSnapshot(userDocRef, (snap) => {
+    onData(snap.exists() ? snap.data() : null);
+  }, (err: any) => {
+    console.error('listenToUserDoc error', err);
+    onData(null);
+  });
+
+  return () => {
+    unsub();
+  };
+}
+
 export async function upsertUserProfile(uid: string, profile: Record<string, any>) {
   if (DEV_AUTH_BYPASS) return;
-  console.log('[FamPals] upsertUserProfile called for uid:', uid);
-  if (!db) {
-    console.error('[FamPals] upsertUserProfile: Firestore db is null/undefined!');
+
+  if (shouldUseBackend(uid)) {
+    await apiRequest(uid, '/api/user/me/profile', {
+      method: 'PUT',
+      body: JSON.stringify({ profile: stripUndefined(profile) || {} }),
+    });
     return;
   }
-  console.log('[FamPals] Firestore db available, creating user doc ref...');
-  try {
-    const userDocRef = doc(db, 'users', uid);
-    const dataToSave = {
-      profile: stripUndefined(profile) || {},
-      lastLoginAt: new Date().toISOString(),
-    };
-    console.log('[FamPals] Attempting setDoc for user:', uid, 'data:', JSON.stringify(dataToSave).substring(0, 200));
-    console.time(`upsert:user:${uid}`);
-    await setDoc(userDocRef, dataToSave, { merge: true });
-    console.timeEnd(`upsert:user:${uid}`);
-    console.log('[FamPals] User profile saved successfully to Firestore!');
-  } catch (err: any) {
-    console.error('[FamPals] upsertUserProfile FAILED:', err?.message || err, err?.code);
-    throw err;
+
+  if (!db) {
+    return;
   }
+
+  const userDocRef = doc(db, 'users', uid);
+  await setDoc(userDocRef, {
+    profile: stripUndefined(profile) || {},
+    lastLoginAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export async function saveUserField(uid: string, key: string, value: any) {
   if (DEV_AUTH_BYPASS) return;
-  if (!db) {
-    console.warn('saveUserField: Firestore not initialized');
+
+  const cleanedValue = key === 'entitlement'
+    ? sanitizeClientEntitlementPatch(value)
+    : stripUndefined(value);
+
+  if (shouldUseBackend(uid)) {
+    await apiRequest(uid, '/api/user/me/field', {
+      method: 'PATCH',
+      body: JSON.stringify({ key, value: cleanedValue }),
+    });
     return;
   }
-  try {
-    const userDocRef = doc(db, 'users', uid);
-    const payload: Record<string, any> = {};
-    const cleanedValue = key === 'entitlement'
-      ? sanitizeClientEntitlementPatch(value)
-      : stripUndefined(value);
-    payload[key] = cleanedValue === undefined ? deleteField() : cleanedValue;
-    await setDoc(userDocRef, payload, { merge: true });
-  } catch (err) {
-    console.error('saveUserField failed', err);
-    throw err;
+
+  if (!db) {
+    return;
   }
+
+  const userDocRef = doc(db, 'users', uid);
+  const payload: Record<string, any> = {};
+  payload[key] = cleanedValue === undefined ? deleteField() : cleanedValue;
+  await setDoc(userDocRef, payload, { merge: true });
 }
 
 export function listenToSavedPlaces(uid: string, onData: (places: SavedPlace[]) => void): Unsubscribe {
+  if (shouldUseBackend(uid) && typeof window !== 'undefined') {
+    return createPollingSubscription(() => fetchSavedPlaces(uid), onData, []);
+  }
+
   if (!db) {
-    console.warn('listenToSavedPlaces: Firestore not initialized');
     onData([]);
     return () => {};
   }
+
   const ref = collection(db, 'users', uid, 'savedPlaces');
   const unsub = onSnapshot(ref, (snap) => {
     const places = snap.docs.map((docSnap) => {
@@ -137,15 +244,7 @@ export function listenToSavedPlaces(uid: string, onData: (places: SavedPlace[]) 
         ...data,
       };
     });
-    const toMillis = (value: any) => {
-      if (!value) return 0;
-      if (typeof value === 'string') return Date.parse(value) || 0;
-      if (value instanceof Date) return value.getTime();
-      if (typeof value.toMillis === 'function') return value.toMillis();
-      return 0;
-    };
-    places.sort((a, b) => toMillis(b.savedAt) - toMillis(a.savedAt));
-    onData(places);
+    onData(sortSavedPlaces(places));
   }, (err) => {
     console.error('listenToSavedPlaces error', err);
     onData([]);
@@ -156,31 +255,39 @@ export function listenToSavedPlaces(uid: string, onData: (places: SavedPlace[]) 
 
 export async function upsertSavedPlace(uid: string, place: SavedPlace): Promise<void> {
   if (DEV_AUTH_BYPASS) return;
-  if (!db) {
-    console.warn('upsertSavedPlace: Firestore not initialized');
+
+  const payload = stripUndefined(place);
+
+  if (shouldUseBackend(uid)) {
+    await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(place.placeId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ place: payload }),
+    });
     return;
   }
-  try {
-    const ref = doc(db, 'users', uid, 'savedPlaces', place.placeId);
-    const payload = stripUndefined(place);
-    await setDoc(ref, payload, { merge: true });
-  } catch (err) {
-    console.error('upsertSavedPlace failed', err);
-    throw err;
+
+  if (!db) {
+    return;
   }
+
+  const ref = doc(db, 'users', uid, 'savedPlaces', place.placeId);
+  await setDoc(ref, payload, { merge: true });
 }
 
 export async function deleteSavedPlace(uid: string, placeId: string): Promise<void> {
   if (DEV_AUTH_BYPASS) return;
-  if (!db) {
-    console.warn('deleteSavedPlace: Firestore not initialized');
+
+  if (shouldUseBackend(uid)) {
+    await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(placeId)}`, {
+      method: 'DELETE',
+    });
     return;
   }
-  try {
-    const ref = doc(db, 'users', uid, 'savedPlaces', placeId);
-    await deleteDoc(ref);
-  } catch (err) {
-    console.error('deleteSavedPlace failed', err);
-    throw err;
+
+  if (!db) {
+    return;
   }
+
+  const ref = doc(db, 'users', uid, 'savedPlaces', placeId);
+  await deleteDoc(ref);
 }
