@@ -129,8 +129,8 @@ const App: React.FC = () => {
     try {
       const stored = localStorage.getItem('fampals_dark_mode');
       if (stored !== null) return stored === 'true';
-      return true;
-    } catch { return true; }
+      return false;
+    } catch { return false; }
   });
   const accessContext: AppAccessContext = buildAccessContext({
     isGuest,

@@ -76,7 +76,7 @@ const TabButton: React.FC<TabButtonProps> = ({ label, count, active, onClick }) 
     onClick={onClick}
     aria-label={`${label}${count !== undefined && count > 0 ? `, ${count} items` : ''}`}
     className={`px-4 py-2.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 min-h-[44px] ${
-      active ? 'bg-purple-500 text-white shadow-lg shadow-purple-200' : 'bg-white text-slate-600 border border-slate-200'
+      active ? 'stitch-chip-active text-[#b35b00]' : 'stitch-chip'
     }`}
   >
     {label}{count !== undefined && count > 0 ? ` (${count})` : ''}
@@ -1803,7 +1803,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   const showPlaceDetail = !!selectedPlaceWithAccessibility;
 
   return (
-    <div className={`min-h-screen bg-[#F8FAFC] pb-32 ${showPlaceDetail ? '' : 'container-safe'}`}>
+    <div className={`min-h-screen stitch-shell pb-32 ${showPlaceDetail ? '' : 'container-safe'}`}>
       {!showCircleDetail && !showPlaceDetail && (
         <Header 
           setView={setView} 
@@ -1897,13 +1897,15 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
         />
       ) : (
         <div className="px-4 py-4">
-        <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar pb-1 scroll-pl-4" style={{ scrollPaddingLeft: '1rem', scrollPaddingRight: '1rem' }}>
+        <div className="mb-4 rounded-[2rem] bg-white/55 p-2 shadow-[0_14px_30px_rgba(24,0,82,0.05)]">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 scroll-pl-4" style={{ scrollPaddingLeft: '1rem', scrollPaddingRight: '1rem' }}>
           <TabButton label="Explore" active={activeTab === 'explore'} onClick={() => handleTabChange('explore')} />
           <TabButton label="Saved" count={state.favorites.length} active={activeTab === 'favorites'} onClick={() => handleTabChange('favorites')} />
           <TabButton label="My Activity" active={activeTab === 'activity'} onClick={() => handleTabChange('activity')} />
           <TabButton label="Memories" count={state.memories.length} active={activeTab === 'memories'} onClick={() => handleTabChange('memories')} />
           <TabButton label="Partner" active={activeTab === 'partner'} onClick={() => handleTabChange('partner')} />
           <TabButton label="Circles" count={circles.length} active={activeTab === 'circles'} onClick={() => handleTabChange('circles')} />
+        </div>
         </div>
 
         {activeTab === 'explore' && (
@@ -1920,19 +1922,19 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
             <div className="flex items-center gap-2 mt-3">
               <button
                 onClick={() => setShowFilterPanel(true)}
-                className="flex-1 h-11 flex items-center gap-2 px-4 rounded-xl bg-white border border-slate-200 shadow-sm text-sm font-semibold text-slate-700 active:bg-slate-50"
+                className="stitch-card-soft flex-1 h-11 flex items-center gap-2 px-4 text-sm font-semibold text-slate-700 active:bg-slate-50"
               >
                 <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>
                 <span>Filters</span>
                 {(prefFilterMode !== 'all' || hideSavedPlaces || selectedLensChipItems.length > 0 || radiusKm !== 10) && (
-                  <span className="ml-auto flex items-center justify-center w-5 h-5 rounded-full bg-purple-500 text-white text-[10px] font-bold">
+                  <span className="ml-auto flex items-center justify-center w-5 h-5 rounded-full bg-[#ff8c00] text-white text-[10px] font-bold">
                     {[prefFilterMode !== 'all', hideSavedPlaces, selectedLensChipItems.length > 0, radiusKm !== 10].filter(Boolean).length}
                   </span>
                 )}
               </button>
               <button
                 onClick={() => setManualRefreshTrigger(prev => prev + 1)}
-                className="h-11 px-4 rounded-xl bg-purple-500 active:bg-purple-600 text-white text-sm font-bold shadow-sm flex items-center gap-2 min-w-[100px] justify-center"
+                className="stitch-pill-button h-11 px-4 text-sm font-bold flex items-center gap-2 min-w-[100px] justify-center"
               >
                 <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>
                 Refresh
@@ -1945,15 +1947,15 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600">{radiusKm} km</span>
                 )}
                 {prefFilterMode !== 'all' && (
-                  <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700">
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-[#e6f6ff] text-[#0052FF]">
                     {prefFilterMode === 'family' ? 'Family' : prefFilterMode === 'partner' ? 'Partner' : 'Solo'}
                   </span>
                 )}
                 {hideSavedPlaces && (
-                  <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700">Fresh only</span>
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-[#fff2e2] text-[#b35b00]">Fresh only</span>
                 )}
                 {selectedLensChipItems.slice(0, 3).map((chip) => (
-                  <span key={`${chip.lensKey}:${chip.chipId}`} className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-100">
+                  <span key={`${chip.lensKey}:${chip.chipId}`} className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold bg-[#e6f6ff] text-[#0052FF]">
                     {chip.label}
                   </span>
                 ))}

@@ -2,6 +2,20 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --fp-primary: #0052ff;
+  --fp-primary-deep: #003ec7;
+  --fp-secondary: #ff8c00;
+  --fp-tertiary: #00584b;
+  --fp-surface: #f3faff;
+  --fp-surface-low: #e6f6ff;
+  --fp-surface-card: #ffffff;
+  --fp-ink: #180052;
+  --fp-body: #4a5568;
+  --fp-outline-soft: rgba(24, 0, 82, 0.08);
+  --fp-shadow: 0 24px 60px rgba(24, 0, 82, 0.08);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -15,7 +29,11 @@ html, body {
 body {
   font-family: 'Plus Jakarta Sans', sans-serif;
   -webkit-tap-highlight-color: transparent;
-  background-color: #F8FAFC;
+  background:
+    radial-gradient(circle at top right, rgba(255, 140, 0, 0.16), transparent 28%),
+    radial-gradient(circle at top left, rgba(0, 82, 255, 0.14), transparent 32%),
+    linear-gradient(180deg, #f7fbff 0%, var(--fp-surface) 58%, #edf8ff 100%);
+  color: var(--fp-ink);
   overscroll-behavior-y: none;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -216,6 +234,89 @@ html.dark .bg-white\/20 { background-color: rgba(30, 41, 59, 0.3) !important; }
   background-color: rgba(255, 255, 255, 0.9);
 }
 
+.stitch-shell {
+  background:
+    radial-gradient(circle at top right, rgba(255, 140, 0, 0.14), transparent 26%),
+    radial-gradient(circle at 15% 10%, rgba(0, 82, 255, 0.1), transparent 24%),
+    linear-gradient(180deg, #f7fbff 0%, var(--fp-surface) 55%, #edf8ff 100%);
+}
+
+.stitch-header-glass {
+  background: rgba(243, 250, 255, 0.84);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 14px 40px rgba(24, 0, 82, 0.05);
+}
+
+.stitch-card {
+  background: var(--fp-surface-card);
+  border-radius: 2rem;
+  box-shadow: var(--fp-shadow);
+}
+
+.stitch-card-soft {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+  border-radius: 2rem;
+  box-shadow: 0 16px 40px rgba(24, 0, 82, 0.06);
+}
+
+.stitch-pill-button {
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #1f66ff 0%, var(--fp-primary) 100%);
+  color: white;
+  box-shadow: 0 18px 32px rgba(0, 82, 255, 0.22);
+}
+
+.stitch-pill-button-secondary {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--fp-ink);
+  box-shadow: 0 12px 28px rgba(24, 0, 82, 0.08);
+}
+
+.stitch-input {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid transparent;
+  border-radius: 1rem;
+  color: var(--fp-ink);
+  box-shadow: inset 0 0 0 1px rgba(24, 0, 82, 0.05);
+}
+
+.stitch-input:focus {
+  outline: none;
+  border-color: rgba(0, 82, 255, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(0, 82, 255, 0.24), 0 0 0 4px rgba(0, 82, 255, 0.08);
+}
+
+.stitch-chip {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #58708f;
+  box-shadow: 0 10px 20px rgba(24, 0, 82, 0.05);
+}
+
+.stitch-chip-active {
+  background: rgba(255, 140, 0, 0.14);
+  color: #b35b00;
+  box-shadow: 0 10px 18px rgba(255, 140, 0, 0.1);
+}
+
+.stitch-editorial-title {
+  letter-spacing: -0.02em;
+  color: var(--fp-ink);
+}
+
+.stitch-muted {
+  color: var(--fp-body);
+}
+
+.stitch-hero-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(22px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 @keyframes slideUp {
   from {
     transform: translateY(20px);
@@ -232,8 +333,8 @@ html.dark .bg-white\/20 { background-color: rgba(30, 41, 59, 0.3) !important; }
 }
 
 ::selection {
-  background-color: #E9D5FF;
-  color: #7C3AED;
+  background-color: rgba(0, 82, 255, 0.18);
+  color: var(--fp-primary-deep);
 }
 
 .active-press:active {
@@ -293,7 +394,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #A855F7, #D946EF);
+  background: linear-gradient(135deg, #0052ff, #ff8c00);
   cursor: pointer;
   border: 4px solid white;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
