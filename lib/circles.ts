@@ -1,4 +1,5 @@
 import {
+  auth,
   db,
   collection,
   collectionGroup,
@@ -10,7 +11,6 @@ import {
   onSnapshot,
   query,
   where,
-  documentId,
   deleteDoc,
 } from './firebase';
 
@@ -75,6 +75,9 @@ export interface CircleMemoryDoc {
 
 type Unsubscribe = () => void;
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+const POLL_MS = 10000;
+
 function stripUndefined<T>(value: T): T {
   if (value === undefined) {
     return value;
@@ -106,30 +109,93 @@ function generateJoinCode(): string {
   return code;
 }
 
+function shouldUseBackend(): boolean {
+  return !!API_BASE && !!auth?.currentUser;
+}
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const currentUser = auth?.currentUser;
+  if (!currentUser) {
+    throw new Error('auth_user_unavailable');
+  }
+  const token = await currentUser.getIdToken();
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...headers,
+      ...(init?.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `request_failed_${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function createPollingSubscription<T>(loader: () => Promise<T>, onData: (data: T) => void, onErrorValue: T): Unsubscribe {
+  let active = true;
+  let intervalId: number | null = null;
+
+  const load = async () => {
+    try {
+      const data = await loader();
+      if (!active) return;
+      onData(data);
+    } catch (err) {
+      console.error('circle sync failed', err);
+      if (!active) return;
+      onData(onErrorValue);
+    }
+  };
+
+  void load();
+  intervalId = window.setInterval(() => {
+    void load();
+  }, POLL_MS);
+
+  return () => {
+    active = false;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
+  };
+}
+
 export async function createCircle(name: string, user: { uid: string; displayName?: string | null; email?: string | null }) {
-  console.log('[FamPals] Creating circle:', name, 'for user:', user.uid);
+  if (shouldUseBackend()) {
+    const payload = await apiRequest<{ circle: CircleDoc }>('/api/circles', {
+      method: 'POST',
+      body: JSON.stringify({ name, user }),
+    });
+    return payload.circle;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
   const circleRef = doc(collection(db, 'circles'));
   const joinCode = generateJoinCode();
   const createdAt = new Date().toISOString();
-  console.log('[FamPals] Circle ref:', circleRef.id, 'joinCode:', joinCode);
   await setDoc(circleRef, stripUndefined({
     name,
     createdBy: user.uid,
     createdAt,
     joinCode,
   }));
-  console.log('[FamPals] Circle document created successfully');
-
-  const memberRef = doc(db, 'circles', circleRef.id, 'members', user.uid);
-  await setDoc(memberRef, stripUndefined({
+  await setDoc(doc(db, 'circles', circleRef.id, 'members', user.uid), stripUndefined({
     uid: user.uid,
     role: 'owner',
     displayName: user.displayName || undefined,
     email: user.email || undefined,
     joinedAt: createdAt,
   }));
-
   return {
     id: circleRef.id,
     name,
@@ -140,16 +206,22 @@ export async function createCircle(name: string, user: { uid: string; displayNam
 }
 
 export async function createPartnerCircle(
-  name: string, 
+  name: string,
   user: { uid: string; displayName?: string | null; email?: string | null },
   partner: { uid: string; displayName?: string | null; email?: string | null }
 ) {
-  console.log('[FamPals] Creating partner circle:', name, 'for user:', user.uid, 'with partner:', partner.uid);
+  if (shouldUseBackend()) {
+    const payload = await apiRequest<{ circle: CircleDoc }>('/api/circles', {
+      method: 'POST',
+      body: JSON.stringify({ name, user, isPartnerCircle: true, partner }),
+    });
+    return payload.circle;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
   const circleRef = doc(collection(db, 'circles'));
   const joinCode = generateJoinCode();
   const createdAt = new Date().toISOString();
-  
   await setDoc(circleRef, stripUndefined({
     name,
     createdBy: user.uid,
@@ -157,25 +229,20 @@ export async function createPartnerCircle(
     joinCode,
     isPartnerCircle: true,
   }));
-  
-  const ownerRef = doc(db, 'circles', circleRef.id, 'members', user.uid);
-  await setDoc(ownerRef, stripUndefined({
+  await setDoc(doc(db, 'circles', circleRef.id, 'members', user.uid), stripUndefined({
     uid: user.uid,
     role: 'owner',
     displayName: user.displayName || undefined,
     email: user.email || undefined,
     joinedAt: createdAt,
   }));
-  
-  const partnerRef = doc(db, 'circles', circleRef.id, 'members', partner.uid);
-  await setDoc(partnerRef, stripUndefined({
+  await setDoc(doc(db, 'circles', circleRef.id, 'members', partner.uid), stripUndefined({
     uid: partner.uid,
     role: 'member',
     displayName: partner.displayName || undefined,
     email: partner.email || undefined,
     joinedAt: createdAt,
   }));
-
   return {
     id: circleRef.id,
     name,
@@ -187,17 +254,23 @@ export async function createPartnerCircle(
 }
 
 export async function joinCircleByCode(code: string, user: { uid: string; displayName?: string | null; email?: string | null }) {
+  if (shouldUseBackend()) {
+    const payload = await apiRequest<{ circle: CircleDoc }>('/api/circles/join', {
+      method: 'POST',
+      body: JSON.stringify({ code, user }),
+    });
+    return payload.circle;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  const circlesRef = collection(db, 'circles');
-  const q = query(circlesRef, where('joinCode', '==', code));
+  const q = query(collection(db, 'circles'), where('joinCode', '==', code));
   const snap = await getDocs(q);
   if (snap.empty) {
     throw new Error('No circle found for that code.');
   }
   const circleDoc = snap.docs[0];
   const circleData = circleDoc.data();
-  const memberRef = doc(db, 'circles', circleDoc.id, 'members', user.uid);
-  await setDoc(memberRef, stripUndefined({
+  await setDoc(doc(db, 'circles', circleDoc.id, 'members', user.uid), stripUndefined({
     uid: user.uid,
     role: 'member',
     displayName: user.displayName || undefined,
@@ -211,54 +284,37 @@ export async function joinCircleByCode(code: string, user: { uid: string; displa
     createdBy: circleData.createdBy,
     createdAt: circleData.createdAt,
     joinCode: circleData.joinCode,
+    isPartnerCircle: circleData.isPartnerCircle || false,
   } as CircleDoc;
 }
 
 export function listenToUserCircles(uid: string, onData: (circles: CircleDoc[]) => void): Unsubscribe {
-  console.log('[FamPals] listenToUserCircles called for uid:', uid);
+  if (shouldUseBackend() && typeof window !== 'undefined') {
+    return createPollingSubscription(
+      async () => (await apiRequest<{ circles: CircleDoc[] }>('/api/circles')).circles || [],
+      onData,
+      [],
+    );
+  }
+
   if (!db) {
-    console.error('[FamPals] listenToUserCircles: db is null');
     onData([]);
     return () => {};
   }
-  
-  // First try a direct query on circles collection to verify connectivity
-  console.log('[FamPals] Testing Firestore connectivity...');
-  getDocs(collection(db, 'circles')).then(snap => {
-    console.log('[FamPals] Direct circles query returned', snap.docs.length, 'circles');
-  }).catch(err => {
-    console.error('[FamPals] Direct circles query failed:', err);
-  });
 
-  const membersQuery = query(
-    collectionGroup(db, 'members'),
-    where('uid', '==', uid)
-  );
-  console.log('[FamPals] Setting up collectionGroup query on members for uid:', uid);
-
+  const membersQuery = query(collectionGroup(db, 'members'), where('uid', '==', uid));
   const unsub = onSnapshot(membersQuery, async (snap) => {
-    console.log('[FamPals] Members query result - docs count:', snap.docs.length, 'metadata:', snap.metadata);
     if (snap.docs.length === 0) {
-      console.log('[FamPals] No member docs found for this user - user may need to create or join a circle');
       onData([]);
       return;
     }
     const circleDocs = await Promise.all(
       snap.docs.map(async (memberDoc) => {
-        console.log('[FamPals] Processing member doc:', memberDoc.id, memberDoc.data());
         const circleRef = memberDoc.ref.parent.parent;
-        if (!circleRef) {
-          console.log('[FamPals] No parent circle ref found');
-          return null;
-        }
-        console.log('[FamPals] Fetching circle:', circleRef.id);
+        if (!circleRef) return null;
         const circleSnap = await getDoc(circleRef);
-        if (!circleSnap.exists()) {
-          console.log('[FamPals] Circle doc does not exist');
-          return null;
-        }
+        if (!circleSnap.exists()) return null;
         const data = circleSnap.data();
-        console.log('[FamPals] Found circle:', data.name, 'isPartnerCircle:', data.isPartnerCircle);
         return {
           id: circleSnap.id,
           name: data.name,
@@ -267,23 +323,23 @@ export function listenToUserCircles(uid: string, onData: (circles: CircleDoc[]) 
           joinCode: data.joinCode,
           isPartnerCircle: data.isPartnerCircle || false,
         } as CircleDoc;
-      })
+      }),
     );
-    const filtered = circleDocs.filter(Boolean) as CircleDoc[];
-    console.log('[FamPals] Final circles list:', filtered.length, 'circles');
-    onData(filtered);
-  }, (error: any) => {
-    console.error('[FamPals] listenToUserCircles error:', error?.message, error?.code, error);
-    if (error?.code === 'failed-precondition') {
-      console.error('[FamPals] MISSING INDEX: The collectionGroup query requires a Firestore index. Please check Firebase Console > Firestore > Indexes');
-    }
-    onData([]);
-  });
+    onData(circleDocs.filter(Boolean) as CircleDoc[]);
+  }, () => onData([]));
 
   return () => unsub();
 }
 
 export function listenToCircleMembers(circleId: string, onData: (members: CircleMemberDoc[]) => void): Unsubscribe {
+  if (shouldUseBackend() && typeof window !== 'undefined') {
+    return createPollingSubscription(
+      async () => (await apiRequest<{ members: CircleMemberDoc[] }>(`/api/circles/${encodeURIComponent(circleId)}/members`)).members || [],
+      onData,
+      [],
+    );
+  }
+
   if (!db) {
     onData([]);
     return () => {};
@@ -297,6 +353,14 @@ export function listenToCircleMembers(circleId: string, onData: (members: Circle
 }
 
 export function listenToCirclePlaces(circleId: string, onData: (places: CirclePlaceDoc[]) => void): Unsubscribe {
+  if (shouldUseBackend() && typeof window !== 'undefined') {
+    return createPollingSubscription(
+      async () => (await apiRequest<{ places: CirclePlaceDoc[] }>(`/api/circles/${encodeURIComponent(circleId)}/places`)).places || [],
+      onData,
+      [],
+    );
+  }
+
   if (!db) {
     onData([]);
     return () => {};
@@ -310,24 +374,44 @@ export function listenToCirclePlaces(circleId: string, onData: (places: CirclePl
 }
 
 export async function saveCirclePlace(circleId: string, place: CirclePlaceDoc) {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}/places/${encodeURIComponent(place.placeId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ place }),
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  const placeRef = doc(db, 'circles', circleId, 'places', place.placeId);
-  await setDoc(placeRef, stripUndefined(place), { merge: true });
+  await setDoc(doc(db, 'circles', circleId, 'places', place.placeId), stripUndefined(place), { merge: true });
 }
 
 export async function removeCirclePlace(circleId: string, placeId: string) {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}/places/${encodeURIComponent(placeId)}`, {
+      method: 'DELETE',
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  const placeRef = doc(db, 'circles', circleId, 'places', placeId);
-  await deleteDoc(placeRef);
+  await deleteDoc(doc(db, 'circles', circleId, 'places', placeId));
 }
 
 export function listenToCircleComments(circleId: string, placeId: string, onData: (comments: CircleCommentDoc[]) => void): Unsubscribe {
+  if (shouldUseBackend() && typeof window !== 'undefined') {
+    return createPollingSubscription(
+      async () => (await apiRequest<{ comments: CircleCommentDoc[] }>(`/api/circles/${encodeURIComponent(circleId)}/comments?placeId=${encodeURIComponent(placeId)}`)).comments || [],
+      onData,
+      [],
+    );
+  }
+
   if (!db) {
     onData([]);
     return () => {};
   }
-  const ref = collection(db, 'circles', circleId, 'placeComments');
-  const q = query(ref, where('placeId', '==', placeId));
+  const q = query(collection(db, 'circles', circleId, 'placeComments'), where('placeId', '==', placeId));
   const unsub = onSnapshot(q, (snap) => {
     const comments = snap.docs.map((docSnap) => ({
       id: docSnap.id,
@@ -340,12 +424,27 @@ export function listenToCircleComments(circleId: string, placeId: string, onData
 }
 
 export async function addCircleComment(circleId: string, placeId: string, comment: Omit<CircleCommentDoc, 'id' | 'placeId'>) {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ placeId, comment }),
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  const ref = collection(db, 'circles', circleId, 'placeComments');
-  await addDoc(ref, stripUndefined({ ...comment, placeId }));
+  await addDoc(collection(db, 'circles', circleId, 'placeComments'), stripUndefined({ ...comment, placeId }));
 }
 
 export function listenToCircleMemories(circleId: string, onData: (memories: CircleMemoryDoc[]) => void): Unsubscribe {
+  if (shouldUseBackend() && typeof window !== 'undefined') {
+    return createPollingSubscription(
+      async () => (await apiRequest<{ memories: CircleMemoryDoc[] }>(`/api/circles/${encodeURIComponent(circleId)}/memories`)).memories || [],
+      onData,
+      [],
+    );
+  }
+
   if (!db) {
     onData([]);
     return () => {};
@@ -363,59 +462,60 @@ export function listenToCircleMemories(circleId: string, onData: (memories: Circ
 }
 
 export async function addCircleMemory(circleId: string, memory: CircleMemoryDoc) {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}/memories/${encodeURIComponent(memory.memoryId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ memory }),
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  const ref = doc(db, 'circles', circleId, 'memories', memory.memoryId);
-  await setDoc(ref, stripUndefined(memory), { merge: true });
+  await setDoc(doc(db, 'circles', circleId, 'memories', memory.memoryId), stripUndefined(memory), { merge: true });
 }
 
 export async function deleteCircle(circleId: string, userId: string): Promise<void> {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}`, {
+      method: 'DELETE',
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  
-  // Get the circle to verify ownership
   const circleRef = doc(db, 'circles', circleId);
   const circleSnap = await getDoc(circleRef);
-  
   if (!circleSnap.exists()) {
     throw new Error('Circle not found');
   }
-  
   const circleData = circleSnap.data();
   if (circleData.createdBy !== userId) {
     throw new Error('Only the circle owner can delete it');
   }
-  
-  // Delete all subcollections first (members, places, memories, placeComments)
-  const subcollections = ['members', 'places', 'memories', 'placeComments'];
-  
-  for (const subcol of subcollections) {
-    const subcolRef = collection(db, 'circles', circleId, subcol);
-    const subcolSnap = await getDocs(subcolRef);
+  for (const subcol of ['members', 'places', 'memories', 'placeComments']) {
+    const subcolSnap = await getDocs(collection(db, 'circles', circleId, subcol));
     await Promise.all(subcolSnap.docs.map(docSnap => deleteDoc(docSnap.ref)));
   }
-  
-  // Delete the circle document
   await deleteDoc(circleRef);
-  console.log('[FamPals] Circle deleted:', circleId);
 }
 
 export async function leaveCircle(circleId: string, userId: string): Promise<void> {
+  if (shouldUseBackend()) {
+    await apiRequest(`/api/circles/${encodeURIComponent(circleId)}/leave`, {
+      method: 'POST',
+    });
+    return;
+  }
+
   if (!db) throw new Error('Firestore not initialized');
-  
-  // Get the circle to check if user is owner
   const circleRef = doc(db, 'circles', circleId);
   const circleSnap = await getDoc(circleRef);
-  
   if (!circleSnap.exists()) {
     throw new Error('Circle not found');
   }
-  
   const circleData = circleSnap.data();
   if (circleData.createdBy === userId) {
     throw new Error('Owner cannot leave the circle. Delete it instead.');
   }
-  
-  // Remove the member
-  const memberRef = doc(db, 'circles', circleId, 'members', userId);
-  await deleteDoc(memberRef);
-  console.log('[FamPals] User left circle:', circleId);
+  await deleteDoc(doc(db, 'circles', circleId, 'members', userId));
 }

@@ -152,6 +152,48 @@ type PostgresPartnerThreadMemoryRow = {
   updated_at: Date | string | null;
 };
 
+type PostgresCircleRow = {
+  id: string;
+  name: string | null;
+  join_code: string | null;
+  created_by: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type PostgresCircleMemberRow = {
+  circle_id: string;
+  user_id: string;
+  role: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+};
+
+type PostgresCirclePlaceRow = {
+  place_id: string;
+  added_by_user_id: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+};
+
+type PostgresCircleCommentRow = {
+  id: string;
+  place_id: string;
+  user_id: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type PostgresCircleMemoryRow = {
+  id: string;
+  user_id: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
 const CLIENT_WRITABLE_ENTITLEMENT_KEYS = new Set([
   'gemini_credits_used',
   'gemini_credits_limit',
@@ -1223,6 +1265,537 @@ async function savePartnerThreadFamilyPool(userId: string, familyPool: Record<st
     updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
   return nextPool;
+}
+
+function generateCircleJoinCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i += 1) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+function mapCircle(row: PostgresCircleRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    name: row.name || raw.name || 'Circle',
+    createdBy: row.created_by || raw.createdBy || '',
+    createdAt: raw.createdAt || toIsoString(row.created_at) || new Date().toISOString(),
+    joinCode: row.join_code || raw.joinCode || '',
+    isPartnerCircle: raw.isPartnerCircle === true,
+  };
+}
+
+function mapCircleMember(row: PostgresCircleMemberRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    uid: row.user_id,
+    role: (row.role || raw.role || 'member') as 'owner' | 'member',
+    displayName: raw.displayName || undefined,
+    email: raw.email || undefined,
+    joinedAt: raw.joinedAt || toIsoString(row.created_at) || new Date().toISOString(),
+  };
+}
+
+function mapCirclePlace(row: PostgresCirclePlaceRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    ...raw,
+    placeId: raw.placeId || row.place_id,
+    savedByUid: raw.savedByUid || row.added_by_user_id || '',
+    savedAt: raw.savedAt || toIsoString(row.created_at) || new Date().toISOString(),
+  };
+}
+
+function mapCircleComment(row: PostgresCircleCommentRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    placeId: raw.placeId || row.place_id,
+    uid: raw.uid || row.user_id || '',
+    text: raw.text || '',
+    createdAt: raw.createdAt || toIsoString(row.created_at) || new Date().toISOString(),
+    displayName: raw.displayName || undefined,
+  };
+}
+
+function mapCircleMemory(row: PostgresCircleMemoryRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    ...raw,
+    memoryId: raw.memoryId || row.id,
+    createdAt: raw.createdAt || toIsoString(row.created_at) || new Date().toISOString(),
+    createdByUid: raw.createdByUid || row.user_id || '',
+  };
+}
+
+async function isCircleMember(circleId: string, userId: string): Promise<boolean> {
+  if (isPostgresEnabled) {
+    const result = await pgQuery<{ exists: number }>(
+      `
+        select 1 as exists
+        from circle_members
+        where circle_id = $1 and user_id = $2
+        limit 1
+      `,
+      [circleId, userId],
+    );
+    return !!result.rowCount;
+  }
+
+  const memberDoc = await db.collection('circles').doc(circleId).collection('members').doc(userId).get();
+  return memberDoc.exists;
+}
+
+async function getCircleByJoinCode(joinCode: string): Promise<PostgresCircleRow | null> {
+  const result = await pgQuery<PostgresCircleRow>(
+    `
+      select *
+      from circles
+      where upper(coalesce(join_code, '')) = upper($1)
+      limit 1
+    `,
+    [joinCode],
+  );
+  return result.rows[0] || null;
+}
+
+async function listUserCirclesData(userId: string): Promise<Record<string, any>[]> {
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleRow>(
+      `
+        select c.*
+        from circle_members cm
+        join circles c on c.id = cm.circle_id
+        where cm.user_id = $1
+        order by c.created_at desc nulls last
+      `,
+      [userId],
+    );
+    return result.rows.map(mapCircle);
+  }
+
+  const membersSnap = await db.collectionGroup('members').where('uid', '==', userId).get();
+  const circleDocs = await Promise.all(
+    membersSnap.docs.map(async (memberDoc) => {
+      const circleRef = memberDoc.ref.parent.parent;
+      if (!circleRef) return null;
+      const circleSnap = await circleRef.get();
+      if (!circleSnap.exists) return null;
+      const data = circleSnap.data() || {};
+      return {
+        id: circleSnap.id,
+        name: data.name,
+        createdBy: data.createdBy,
+        createdAt: data.createdAt,
+        joinCode: data.joinCode,
+        isPartnerCircle: data.isPartnerCircle || false,
+      };
+    }),
+  );
+  return circleDocs.filter(Boolean) as Record<string, any>[];
+}
+
+async function createCircleData(
+  userId: string,
+  name: string,
+  owner: { displayName?: string | null; email?: string | null },
+  options?: { isPartnerCircle?: boolean; partner?: { uid: string; displayName?: string | null; email?: string | null } | null },
+): Promise<Record<string, any>> {
+  const joinCode = generateCircleJoinCode();
+  const createdAt = new Date().toISOString();
+  const isPartnerCircle = options?.isPartnerCircle === true;
+
+  if (isPostgresEnabled) {
+    await ensurePostgresUserRow(userId);
+    const circleId = crypto.randomUUID();
+    const raw = {
+      name,
+      createdBy: userId,
+      createdAt,
+      joinCode,
+      isPartnerCircle,
+    };
+    await pgQuery(
+      `
+        insert into circles (id, name, join_code, created_by, raw, created_at, updated_at)
+        values ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, now())
+      `,
+      [circleId, name, joinCode, userId, JSON.stringify(raw), createdAt],
+    );
+    await pgQuery(
+      `
+        insert into circle_members (circle_id, user_id, role, raw, created_at)
+        values ($1, $2, 'owner', $3::jsonb, $4::timestamptz)
+      `,
+      [circleId, userId, JSON.stringify({
+        uid: userId,
+        role: 'owner',
+        displayName: owner.displayName || undefined,
+        email: owner.email || undefined,
+        joinedAt: createdAt,
+      }), createdAt],
+    );
+
+    if (options?.partner?.uid) {
+      await ensurePostgresUserRow(options.partner.uid);
+      await pgQuery(
+        `
+          insert into circle_members (circle_id, user_id, role, raw, created_at)
+          values ($1, $2, 'member', $3::jsonb, $4::timestamptz)
+        `,
+        [circleId, options.partner.uid, JSON.stringify({
+          uid: options.partner.uid,
+          role: 'member',
+          displayName: options.partner.displayName || undefined,
+          email: options.partner.email || undefined,
+          joinedAt: createdAt,
+        }), createdAt],
+      );
+    }
+
+    return {
+      id: circleId,
+      name,
+      createdBy: userId,
+      createdAt,
+      joinCode,
+      isPartnerCircle,
+    };
+  }
+
+  const circleRef = db.collection('circles').doc();
+  await circleRef.set({
+    name,
+    createdBy: userId,
+    createdAt,
+    joinCode,
+    isPartnerCircle,
+  });
+  await circleRef.collection('members').doc(userId).set({
+    uid: userId,
+    role: 'owner',
+    displayName: owner.displayName || undefined,
+    email: owner.email || undefined,
+    joinedAt: createdAt,
+  });
+  if (options?.partner?.uid) {
+    await circleRef.collection('members').doc(options.partner.uid).set({
+      uid: options.partner.uid,
+      role: 'member',
+      displayName: options.partner.displayName || undefined,
+      email: options.partner.email || undefined,
+      joinedAt: createdAt,
+    });
+  }
+  return {
+    id: circleRef.id,
+    name,
+    createdBy: userId,
+    createdAt,
+    joinCode,
+    isPartnerCircle,
+  };
+}
+
+async function joinCircleData(code: string, user: { uid: string; displayName?: string | null; email?: string | null }): Promise<Record<string, any>> {
+  if (isPostgresEnabled) {
+    await ensurePostgresUserRow(user.uid);
+    const circle = await getCircleByJoinCode(code);
+    if (!circle) {
+      throw new Error('circle_not_found');
+    }
+    await pgQuery(
+      `
+        insert into circle_members (circle_id, user_id, role, raw, created_at)
+        values ($1, $2, 'member', $3::jsonb, now())
+        on conflict (circle_id, user_id) do update
+        set role = excluded.role,
+            raw = excluded.raw
+      `,
+      [circle.id, user.uid, JSON.stringify({
+        uid: user.uid,
+        role: 'member',
+        displayName: user.displayName || undefined,
+        email: user.email || undefined,
+        joinedAt: new Date().toISOString(),
+      })],
+    );
+    return mapCircle(circle);
+  }
+
+  const snap = await db.collection('circles').where('joinCode', '==', code).get();
+  if (snap.empty) {
+    throw new Error('circle_not_found');
+  }
+  const circleDoc = snap.docs[0];
+  const circleData = circleDoc.data() || {};
+  await circleDoc.ref.collection('members').doc(user.uid).set({
+    uid: user.uid,
+    role: 'member',
+    displayName: user.displayName || undefined,
+    email: user.email || undefined,
+    joinedAt: new Date().toISOString(),
+  }, { merge: true });
+  return {
+    id: circleDoc.id,
+    name: circleData.name,
+    createdBy: circleData.createdBy,
+    createdAt: circleData.createdAt,
+    joinCode: circleData.joinCode,
+    isPartnerCircle: circleData.isPartnerCircle || false,
+  };
+}
+
+async function listCircleMembersData(circleId: string, userId: string): Promise<Record<string, any>[]> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleMemberRow>(
+      `
+        select *
+        from circle_members
+        where circle_id = $1
+        order by created_at asc
+      `,
+      [circleId],
+    );
+    return result.rows.map(mapCircleMember);
+  }
+
+  const snap = await db.collection('circles').doc(circleId).collection('members').get();
+  return snap.docs.map((docSnap) => docSnap.data() || {});
+}
+
+async function listCirclePlacesData(circleId: string, userId: string): Promise<Record<string, any>[]> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCirclePlaceRow>(
+      `
+        select *
+        from circle_places
+        where circle_id = $1
+        order by created_at desc
+      `,
+      [circleId],
+    );
+    return result.rows.map(mapCirclePlace);
+  }
+
+  const snap = await db.collection('circles').doc(circleId).collection('places').get();
+  return snap.docs.map((docSnap) => docSnap.data() || {});
+}
+
+async function saveCirclePlaceData(circleId: string, userId: string, place: Record<string, any>): Promise<void> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  const placeId = String(place.placeId || '').trim();
+  if (!placeId) {
+    throw new Error('place_id_required');
+  }
+
+  if (isPostgresEnabled) {
+    await ensurePostgresPlace(placeId, String(place.placeSummary?.name || place.name || 'Circle place'));
+    await pgQuery(
+      `
+        insert into circle_places (circle_id, place_id, added_by_user_id, raw, created_at)
+        values ($1, $2, $3, $4::jsonb, now())
+        on conflict (circle_id, place_id) do update
+        set raw = excluded.raw,
+            added_by_user_id = excluded.added_by_user_id
+      `,
+      [circleId, placeId, userId, JSON.stringify(stripUndefinedDeep(place) || {})],
+    );
+    return;
+  }
+
+  await db.collection('circles').doc(circleId).collection('places').doc(placeId).set(place, { merge: true });
+}
+
+async function removeCirclePlaceData(circleId: string, userId: string, placeId: string): Promise<void> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `delete from circle_places where circle_id = $1 and place_id = $2`,
+      [circleId, placeId],
+    );
+    return;
+  }
+
+  await db.collection('circles').doc(circleId).collection('places').doc(placeId).delete();
+}
+
+async function listCircleCommentsData(circleId: string, placeId: string, userId: string): Promise<Record<string, any>[]> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleCommentRow>(
+      `
+        select *
+        from circle_place_comments
+        where circle_id = $1 and place_id = $2
+        order by created_at asc
+      `,
+      [circleId, placeId],
+    );
+    return result.rows.map(mapCircleComment);
+  }
+
+  const snap = await db.collection('circles').doc(circleId).collection('placeComments').where('placeId', '==', placeId).get();
+  return snap.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
+    .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
+
+async function addCircleCommentData(circleId: string, userId: string, placeId: string, comment: Record<string, any>): Promise<void> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  const payload = stripUndefinedDeep({ ...comment, placeId }) || {};
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        insert into circle_place_comments (id, circle_id, place_id, user_id, raw, created_at, updated_at)
+        values ($1, $2, $3, $4, $5::jsonb, now(), now())
+      `,
+      [`${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, circleId, placeId, userId, JSON.stringify(payload)],
+    );
+    return;
+  }
+
+  await db.collection('circles').doc(circleId).collection('placeComments').add(payload);
+}
+
+async function listCircleMemoriesData(circleId: string, userId: string): Promise<Record<string, any>[]> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleMemoryRow>(
+      `
+        select *
+        from circle_memories
+        where circle_id = $1
+        order by created_at asc
+      `,
+      [circleId],
+    );
+    return result.rows.map(mapCircleMemory);
+  }
+
+  const snap = await db.collection('circles').doc(circleId).collection('memories').get();
+  return snap.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
+    .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
+
+async function addCircleMemoryData(circleId: string, userId: string, memory: Record<string, any>): Promise<void> {
+  if (!(await isCircleMember(circleId, userId))) {
+    throw new Error('circle_access_denied');
+  }
+
+  const memoryId = String(memory.memoryId || '').trim();
+  if (!memoryId) {
+    throw new Error('memory_id_required');
+  }
+
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        insert into circle_memories (id, circle_id, user_id, raw, created_at, updated_at)
+        values ($1, $2, $3, $4::jsonb, now(), now())
+        on conflict (id) do update
+        set raw = excluded.raw,
+            updated_at = now()
+      `,
+      [memoryId, circleId, userId, JSON.stringify(stripUndefinedDeep(memory) || {})],
+    );
+    return;
+  }
+
+  await db.collection('circles').doc(circleId).collection('memories').doc(memoryId).set(memory, { merge: true });
+}
+
+async function deleteCircleData(circleId: string, userId: string): Promise<void> {
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleRow>(
+      `select * from circles where id = $1 limit 1`,
+      [circleId],
+    );
+    const circle = result.rows[0];
+    if (!circle) {
+      throw new Error('circle_not_found');
+    }
+    if (circle.created_by !== userId) {
+      throw new Error('circle_owner_required');
+    }
+    await pgQuery(`delete from circles where id = $1`, [circleId]);
+    return;
+  }
+
+  const circleRef = db.collection('circles').doc(circleId);
+  const circleSnap = await circleRef.get();
+  if (!circleSnap.exists) {
+    throw new Error('circle_not_found');
+  }
+  const circleData = circleSnap.data() || {};
+  if (circleData.createdBy !== userId) {
+    throw new Error('circle_owner_required');
+  }
+  for (const subcol of ['members', 'places', 'memories', 'placeComments']) {
+    const subcolSnap = await circleRef.collection(subcol).get();
+    await Promise.all(subcolSnap.docs.map((docSnap) => docSnap.ref.delete()));
+  }
+  await circleRef.delete();
+}
+
+async function leaveCircleData(circleId: string, userId: string): Promise<void> {
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresCircleRow>(
+      `select * from circles where id = $1 limit 1`,
+      [circleId],
+    );
+    const circle = result.rows[0];
+    if (!circle) {
+      throw new Error('circle_not_found');
+    }
+    if (circle.created_by === userId) {
+      throw new Error('circle_owner_cannot_leave');
+    }
+    await pgQuery(
+      `delete from circle_members where circle_id = $1 and user_id = $2`,
+      [circleId, userId],
+    );
+    return;
+  }
+
+  const circleRef = db.collection('circles').doc(circleId);
+  const circleSnap = await circleRef.get();
+  if (!circleSnap.exists) {
+    throw new Error('circle_not_found');
+  }
+  const circleData = circleSnap.data() || {};
+  if (circleData.createdBy === userId) {
+    throw new Error('circle_owner_cannot_leave');
+  }
+  await circleRef.collection('members').doc(userId).delete();
 }
 
 function mapPostgresPlaceClaim(row: PostgresPlaceClaimRow) {
@@ -3655,6 +4228,240 @@ app.post('/api/paystack/verify-business', requireAuth, async (req: Authenticated
 });
 
 const VALID_DELETION_CATEGORIES = ['saved_places', 'search_history', 'reviews_notes', 'profile_preferences', 'partner_circles'];
+
+app.get('/api/circles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circles = await listUserCirclesData(req.uid!);
+    return res.json({ circles });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to list circles:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to list circles' });
+  }
+});
+
+app.post('/api/circles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    const circle = await createCircleData(
+      userId,
+      name,
+      {
+        displayName: typeof req.body?.user?.displayName === 'string' ? req.body.user.displayName : null,
+        email: typeof req.body?.user?.email === 'string' ? req.body.user.email : null,
+      },
+      {
+        isPartnerCircle: req.body?.isPartnerCircle === true,
+        partner: isRecord(req.body?.partner) ? req.body.partner : null,
+      },
+    );
+    return res.json({ circle });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to create circle:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to create circle' });
+  }
+});
+
+app.post('/api/circles/join', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim().toUpperCase() : '';
+    if (!code) {
+      return res.status(400).json({ error: 'code is required' });
+    }
+    const circle = await joinCircleData(code, {
+      uid: req.uid!,
+      displayName: typeof req.body?.user?.displayName === 'string' ? req.body.user.displayName : null,
+      email: typeof req.body?.user?.email === 'string' ? req.body.user.email : null,
+    });
+    return res.json({ circle });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_not_found') {
+      return res.status(404).json({ error: 'No circle found for that code.' });
+    }
+    console.error('[FamPals API] Failed to join circle:', message);
+    return res.status(500).json({ error: 'Failed to join circle' });
+  }
+});
+
+app.get('/api/circles/:circleId/members', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const members = await listCircleMembersData(circleId, req.uid!);
+    return res.json({ members });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to list circle members:', message);
+    return res.status(500).json({ error: 'Failed to list circle members' });
+  }
+});
+
+app.get('/api/circles/:circleId/places', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const places = await listCirclePlacesData(circleId, req.uid!);
+    return res.json({ places });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to list circle places:', message);
+    return res.status(500).json({ error: 'Failed to list circle places' });
+  }
+});
+
+app.put('/api/circles/:circleId/places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const placeId = String(req.params.placeId || '').trim();
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const place = isRecord(req.body?.place) ? { ...req.body.place, placeId } : { placeId };
+    await saveCirclePlaceData(circleId, req.uid!, place);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to save circle place:', message);
+    return res.status(500).json({ error: 'Failed to save circle place' });
+  }
+});
+
+app.delete('/api/circles/:circleId/places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const placeId = String(req.params.placeId || '').trim();
+    await removeCirclePlaceData(circleId, req.uid!, placeId);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to remove circle place:', message);
+    return res.status(500).json({ error: 'Failed to remove circle place' });
+  }
+});
+
+app.get('/api/circles/:circleId/comments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const placeId = typeof req.query.placeId === 'string' ? req.query.placeId.trim() : '';
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const comments = await listCircleCommentsData(circleId, placeId, req.uid!);
+    return res.json({ comments });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to list circle comments:', message);
+    return res.status(500).json({ error: 'Failed to list circle comments' });
+  }
+});
+
+app.post('/api/circles/:circleId/comments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const placeId = typeof req.body?.placeId === 'string' ? req.body.placeId.trim() : '';
+    const comment = isRecord(req.body?.comment) ? req.body.comment : {};
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    await addCircleCommentData(circleId, req.uid!, placeId, comment);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to add circle comment:', message);
+    return res.status(500).json({ error: 'Failed to add circle comment' });
+  }
+});
+
+app.get('/api/circles/:circleId/memories', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const memories = await listCircleMemoriesData(circleId, req.uid!);
+    return res.json({ memories });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to list circle memories:', message);
+    return res.status(500).json({ error: 'Failed to list circle memories' });
+  }
+});
+
+app.put('/api/circles/:circleId/memories/:memoryId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    const memoryId = String(req.params.memoryId || '').trim();
+    if (!memoryId) {
+      return res.status(400).json({ error: 'memoryId is required' });
+    }
+    const memory = isRecord(req.body?.memory) ? { ...req.body.memory, memoryId } : { memoryId };
+    await addCircleMemoryData(circleId, req.uid!, memory);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_access_denied') {
+      return res.status(403).json({ error: 'Circle access denied' });
+    }
+    console.error('[FamPals API] Failed to save circle memory:', message);
+    return res.status(500).json({ error: 'Failed to save circle memory' });
+  }
+});
+
+app.delete('/api/circles/:circleId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    await deleteCircleData(circleId, req.uid!);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_owner_required') {
+      return res.status(403).json({ error: 'Only the circle owner can delete it' });
+    }
+    if (message === 'circle_not_found') {
+      return res.status(404).json({ error: 'Circle not found' });
+    }
+    console.error('[FamPals API] Failed to delete circle:', message);
+    return res.status(500).json({ error: 'Failed to delete circle' });
+  }
+});
+
+app.post('/api/circles/:circleId/leave', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const circleId = String(req.params.circleId || '').trim();
+    await leaveCircleData(circleId, req.uid!);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const message = err?.message || err;
+    if (message === 'circle_owner_cannot_leave') {
+      return res.status(400).json({ error: 'Owner cannot leave the circle. Delete it instead.' });
+    }
+    if (message === 'circle_not_found') {
+      return res.status(404).json({ error: 'Circle not found' });
+    }
+    console.error('[FamPals API] Failed to leave circle:', message);
+    return res.status(500).json({ error: 'Failed to leave circle' });
+  }
+});
 
 app.get('/api/user/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
