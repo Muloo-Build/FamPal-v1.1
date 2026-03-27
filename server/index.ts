@@ -1937,7 +1937,6 @@ app.get('/api/place-claims/place/:placeId', requireAuth, async (req: Authenticat
     const snapshot = await db.collection('placeClaims')
       .where('placeId', '==', placeId)
       .where('userId', '==', userId)
-      .orderBy('createdAt', 'desc')
       .limit(1)
       .get();
 
@@ -2330,3 +2329,4 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
+
