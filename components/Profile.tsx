@@ -3,7 +3,7 @@ import { AppState, Child, Pet, PetType, PartnerLink, Preferences, UserAccessibil
 import PlanBilling from './PlanBilling';
 import ExplorerLevel from './ExplorerLevel';
 import { getLimits, getPlanDisplayName, canUseAI, isPaidTier } from '../lib/entitlements';
-import { storage, auth, db, collection, query, where, getDocs, getDoc, doc, setDoc, ref, uploadBytes, getDownloadURL, writeBatch, deleteField, serverTimestamp } from '../lib/firebase';
+import { storage, auth, ref, uploadBytes, getDownloadURL, writeBatch } from '../lib/firebase';
 import type { AppAccessContext } from '../lib/access';
 import { googleProvider, signOut as firebaseSignOut } from '../lib/firebase';
 import { reauthenticateWithRedirect } from 'firebase/auth';
@@ -16,7 +16,7 @@ import {
 } from '../lib/accountDeletion';
 import ManageMyData from '../src/components/ManageMyData';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
 const DELETE_CONFIRM_TEXT = 'DELETE';
 const DELETE_REAUTH_PENDING_KEY = 'fampals_delete_reauth_pending';
 
@@ -213,12 +213,11 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     }
     const ADMIN_CODE = 'FAMPRO2026';
     if (adminCode.toUpperCase() === ADMIN_CODE) {
-      if (!db || !auth?.currentUser) {
+      if (!auth?.currentUser) {
         alert('Please sign in first.');
         return;
       }
       try {
-        const userRef = doc(db, 'users', auth.currentUser.uid);
         const now = new Date();
         const resetDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
         const proEntitlement = {
@@ -236,7 +235,19 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
           ai_requests_this_month: 0,
           ai_requests_reset_date: resetDate.toISOString(),
         };
-        await setDoc(userRef, { entitlement: proEntitlement }, { merge: true });
+        const idToken = await auth.currentUser.getIdToken();
+        const response = await fetch(`${API_BASE}/api/dev/grant-pro`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ entitlement: proEntitlement }),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to apply admin code');
+        }
         onUpdateState('entitlement', proEntitlement);
         setAdminCode('');
         setShowAdminCode(false);
@@ -275,77 +286,40 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
       alert('Please enter a valid 6-character code.');
       return;
     }
-    if (!db || !auth?.currentUser) {
+    if (!auth?.currentUser) {
       alert('Please sign in to link with a partner.');
       return;
     }
 
     const normalizedCode = partnerCode.toUpperCase();
-    console.log('[FamPals] Searching for partner with code:', normalizedCode);
-    
     try {
-      // Query for users who have this invite code in their partnerLink
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('partnerLink.inviteCode', '==', normalizedCode));
-      console.log('[FamPals] Running partner code query...');
-      const snap = await getDocs(q);
-      console.log('[FamPals] Query returned', snap.docs.length, 'results');
-      
-      // Find a match that isn't the current user
-      const match = snap.docs.find(docSnap => docSnap.id !== auth.currentUser?.uid);
+      const idToken = await auth.currentUser.getIdToken();
+      const selfProfileName = state.user?.displayName || state.user?.email || 'Partner';
+      const response = await fetch(`${API_BASE}/api/partner/link`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ 
+          inviteCode: normalizedCode,
+          selfName: selfProfileName,
+        }),
+      });
 
-      if (!match) {
-        console.log('[FamPals] No partner found with code:', normalizedCode);
-        alert('No partner found with this code. Please check and try again.');
-        setPartnerCode('');
-        return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to link');
       }
 
-      console.log('[FamPals] Found partner:', match.id);
-      const partnerData = match.data() || {};
-      const partnerProfile = partnerData.profile || {};
-      const partnerName = partnerProfile.displayName || partnerProfile.email || 'Partner';
-      const partnerUserId = match.id;
-
-      // Use backend API to link both users (bypasses Firestore rules)
-      try {
-        console.log('[FamPals] Linking partner via API');
-        const idToken = await auth.currentUser.getIdToken();
-        const selfProfileName = state.user?.displayName || state.user?.email || 'Partner';
-        
-        const response = await fetch(`${API_BASE}/api/partner/link`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ 
-            partnerUserId,
-            partnerName,
-            selfName: selfProfileName,
-            inviteCode: normalizedCode,
-          }),
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Failed to link');
-        }
-        
-        const data = await response.json();
-        console.log('[FamPals] Partner link successful via API:', data);
-        
-        onUpdateState('partnerLink', data.partnerLink);
-        setPartnerCode('');
-        setShowCodeInput(false);
-        alert('Successfully linked with ' + partnerName + '! The Partner tab is now available.');
-      } catch (err: any) {
-        console.warn('[FamPals] Unable to link partner via API:', err);
-        alert('Unable to link with partner. Please try again.');
-      }
-    } catch (err) {
-      console.error('[FamPals] Partner lookup failed:', err);
-      alert('Failed to find partner. Please try again.');
+      const partnerLink = data.partnerLink || undefined;
+      onUpdateState('partnerLink', partnerLink);
+      setPartnerCode('');
+      setShowCodeInput(false);
+      alert(`Successfully linked with ${partnerLink?.partnerName || 'your partner'}! The Partner tab is now available.`);
+    } catch (err: any) {
+      console.warn('[FamPals] Partner lookup failed:', err);
+      alert(err?.message || 'Failed to find partner. Please try again.');
     }
   };
 
@@ -356,7 +330,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
       onUpdateState('linkedEmail', undefined);
       return;
     }
-    if (!db || !auth?.currentUser?.uid) {
+    if (!auth?.currentUser?.uid) {
       onUpdateState('partnerLink', undefined);
       onUpdateState('spouseName', undefined);
       onUpdateState('linkedEmail', undefined);
@@ -365,10 +339,10 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     const uid = auth.currentUser.uid;
     const partnerUserId = state.partnerLink?.partnerUserId;
     
-    // If no partner linked yet (pending code), just clear locally and in Firestore
+    // If no partner linked yet (pending code), clear it through the shared user-data path.
     if (!partnerUserId) {
       try {
-        await setDoc(doc(db, 'users', uid), { partnerLink: deleteField() }, { merge: true });
+        await saveUserField(uid, 'partnerLink', undefined);
         onUpdateState('partnerLink', undefined);
         onUpdateState('spouseName', undefined);
         onUpdateState('linkedEmail', undefined);

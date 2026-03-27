@@ -22,7 +22,7 @@ import {
   getSelectedChipItems,
 } from '../lib/exploreFilters';
 import { ShareMemoryModal } from './ShareMemory';
-import { db, doc, getDoc, collection, onSnapshot, setDoc, auth, serverTimestamp, increment, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
+import { db, doc, getDoc, onSnapshot, auth, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
 import { upsertSavedPlace, deleteSavedPlace } from '../lib/userData';
 import { loadPlaceAccessibilityByIds, rankPlacesWithAccessibilityNeeds, submitAccessibilityReport } from '../lib/placeAccessibility';
 import { generateAccessibilitySummary } from '../src/utils/accessibility';
@@ -41,7 +41,7 @@ import {
   saveCirclePlace,
   deleteCircle,
 } from '../lib/circles';
-import { getPartnerThreadId, ensurePartnerThread } from '../lib/partnerThreads';
+import { ensurePartnerThread, fetchPartnerThreadState, savePartnerThreadFamilyPool, savePartnerThreadMemory, savePartnerThreadNote, savePartnerThreadPlace } from '../lib/partnerThreads';
 import { Timestamp } from 'firebase/firestore';
 import type { AppAccessContext } from '../lib/access';
 import { formatPriceLevel as formatPriceLevelUtil } from '../src/utils/priceLevel';
@@ -347,42 +347,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   }, [userPrefs.lastLocation, persistLocation]);
 
   useEffect(() => {
-    if (!db) return;
-    const link = state.partnerLink;
-    if (!link?.partnerUserId) return;
-    if (link.partnerName && link.partnerPhotoURL && link.partnerEmail) return;
-
-    let cancelled = false;
-    const loadPartnerProfile = async () => {
-      try {
-        const partnerDoc = await getDoc(doc(db, 'users', link.partnerUserId));
-        if (!partnerDoc.exists()) return;
-        const data = partnerDoc.data() || {};
-        const profile = data.profile || {};
-        const nextName = link.partnerName || profile.displayName || profile.email;
-        const nextEmail = link.partnerEmail || profile.email;
-        const nextPhoto = link.partnerPhotoURL || profile.photoURL;
-        if (!nextName && !nextEmail && !nextPhoto) return;
-        if (!cancelled) {
-          onUpdateState('partnerLink', {
-            ...link,
-            partnerName: nextName,
-            partnerEmail: nextEmail,
-            partnerPhotoURL: nextPhoto,
-          });
-        }
-      } catch (err) {
-        console.warn('Partner profile lookup failed.', err);
-      }
-    };
-
-    loadPartnerProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [state.partnerLink, onUpdateState]);
-
-  useEffect(() => {
     if (!canSyncCloud) return;
     const uid = state.user?.uid || auth?.currentUser?.uid;
     const partnerId = state.partnerLink?.partnerUserId;
@@ -416,158 +380,97 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   }, [initialCircleId, circles, onClearInitialCircle]);
 
   useEffect(() => {
-    if (!db) return;
-    if (!state.user?.uid) return;
-    if (!canSyncCloud) return;
-    const link = state.partnerLink;
-    if (!link?.partnerUserId || link.status !== 'accepted') {
+    if (!canSyncCloud || !state.user?.uid) {
       setPartnerNotes([]);
       setNoteError(null);
-      return;
-    }
-    let unsub: (() => void) | null = null;
-    let cancelled = false;
-    const threadId = getPartnerThreadId(state.user.uid, link.partnerUserId);
-    (async () => {
-      try {
-        await ensurePartnerThread(state.user!.uid, link.partnerUserId);
-        if (cancelled) return;
-        const notesRef = collection(db, 'partnerThreads', threadId, 'notes');
-        unsub = onSnapshot(notesRef, (snap) => {
-          const nextNotes = snap.docs.map((docSnap) => {
-            const data = docSnap.data() as Omit<PartnerNote, 'id'>;
-            return { id: docSnap.id, ...data };
-          });
-          nextNotes.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-          setPartnerNotes(nextNotes);
-        }, (err: any) => {
-          console.warn('Partner notes listener error.', err);
-          if (err?.code === 'permission-denied') {
-            setNoteError('Partner notes are unavailable (permission denied).');
-          } else {
-            setNoteError('Unable to load notes right now.');
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to initialize partner notes thread.', err);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (unsub) unsub();
-    };
-  }, [state.user?.uid, state.partnerLink, canSyncCloud]);
-
-  useEffect(() => {
-    if (!db) return;
-    if (!canSyncCloud) return;
-    const uid = state.user?.uid;
-    const link = state.partnerLink;
-    if (!uid || !link?.partnerUserId || link.status !== 'accepted') {
       onUpdateState('partnerSharedPlaces', []);
       setPartnerSharedMemories([]);
       onUpdateState('familyPool', undefined);
       return;
     }
-    let unsubPlaces: (() => void) | null = null;
-    let unsubMemories: (() => void) | null = null;
-    let unsubThread: (() => void) | null = null;
+
+    const uid = state.user.uid;
+    const link = state.partnerLink;
+    if (!link?.partnerUserId || link.status !== 'accepted') {
+      setPartnerNotes([]);
+      setNoteError(null);
+      onUpdateState('partnerSharedPlaces', []);
+      setPartnerSharedMemories([]);
+      onUpdateState('familyPool', undefined);
+      return;
+    }
+
     let cancelled = false;
-    const threadId = getPartnerThreadId(uid, link.partnerUserId);
-    (async () => {
+    const syncPartnerThread = async () => {
       try {
         await ensurePartnerThread(uid, link.partnerUserId);
+        const data = await fetchPartnerThreadState();
         if (cancelled) return;
-        const placesRef = collection(db, 'partnerThreads', threadId, 'sharedPlaces');
-        const memoriesRef = collection(db, 'partnerThreads', threadId, 'sharedMemories');
-        const threadRef = doc(db, 'partnerThreads', threadId);
 
-        unsubPlaces = onSnapshot(placesRef, (snap) => {
-          const nextPlaces = snap.docs.map(docSnap => docSnap.data() as GroupPlace);
-          nextPlaces.sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
-          onUpdateState('partnerSharedPlaces', nextPlaces);
-        }, (err: any) => {
-          console.warn('Partner shared places listener error.', err);
-        });
+        setPartnerNotes((data.notes || []) as PartnerNote[]);
+        setNoteError(null);
+        onUpdateState('partnerSharedPlaces', data.sharedPlaces || []);
+        setPartnerSharedMemories(data.sharedMemories || []);
 
-        unsubMemories = onSnapshot(memoriesRef, (snap) => {
-          const nextMemories = snap.docs.map(docSnap => {
-            const data = docSnap.data() as Omit<Memory, 'id'>;
-            return { id: docSnap.id, ...data };
-          });
-          nextMemories.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-          setPartnerSharedMemories(nextMemories);
-        }, (err: any) => {
-          console.warn('Partner shared memories listener error.', err);
-        });
-
-        unsubThread = onSnapshot(threadRef, (snap) => {
-          const data = snap.data() || {};
-          const pool = data.entitlementPool;
-          const isFamilyPlan = state.entitlement?.plan_tier === 'family';
-          if (isFamilyPlan) {
-            const poolResetDate = pool?.ai_requests_reset_date;
-            const nextResetDate = getNextResetDate();
-            const resetKey = `${threadId}:${poolResetDate || 'none'}`;
-            const shouldReset = poolResetDate ? new Date() >= new Date(poolResetDate) : true;
-            if (shouldReset && familyPoolResetRef.current !== resetKey) {
-              familyPoolResetRef.current = resetKey;
-              setDoc(threadRef, {
-                entitlementPool: {
-                  plan_tier: 'family',
-                  ai_requests_this_month: 0,
-                  ai_requests_reset_date: nextResetDate,
-                },
-                updatedAt: serverTimestamp(),
-              }, { merge: true }).catch(err => {
-                console.warn('Failed to reset family AI pool.', err);
-              });
-            } else if (!pool?.ai_requests_reset_date && familyPoolResetRef.current !== resetKey) {
-              familyPoolResetRef.current = resetKey;
-              setDoc(threadRef, {
-                entitlementPool: {
-                  plan_tier: 'family',
-                  ai_requests_this_month: pool?.ai_requests_this_month || 0,
-                  ai_requests_reset_date: nextResetDate,
-                },
-                updatedAt: serverTimestamp(),
-              }, { merge: true }).catch(err => {
-                console.warn('Failed to initialize family AI pool.', err);
-              });
-            }
-          }
-
-          if (isFamilyPlan && pool) {
-            onUpdateState('familyPool', {
+        const isFamilyPlan = state.entitlement?.plan_tier === 'family';
+        if (isFamilyPlan) {
+          const pool = data.familyPool || {};
+          const poolResetDate = pool?.ai_requests_reset_date;
+          const nextResetDate = getNextResetDate();
+          const resetKey = `${uid}:${poolResetDate || 'none'}`;
+          const shouldReset = poolResetDate ? new Date() >= new Date(poolResetDate) : true;
+          if ((shouldReset || !pool?.ai_requests_reset_date) && familyPoolResetRef.current !== resetKey) {
+            familyPoolResetRef.current = resetKey;
+            const nextPool = await savePartnerThreadFamilyPool({
+              plan_tier: 'family',
+              ai_requests_this_month: shouldReset ? 0 : (pool?.ai_requests_this_month || 0),
+              ai_requests_reset_date: nextResetDate,
+            });
+            if (cancelled) return;
+            onUpdateState('familyPool', nextPool || undefined);
+          } else {
+            onUpdateState('familyPool', pool ? {
               ai_requests_this_month: pool.ai_requests_this_month || 0,
               ai_requests_reset_date: pool.ai_requests_reset_date || getNextResetDate(),
-            });
-          } else {
-            onUpdateState('familyPool', undefined);
+            } : undefined);
           }
-        }, (err: any) => {
-          console.warn('Partner thread listener error.', err);
-        });
+        } else {
+          onUpdateState('familyPool', undefined);
+        }
+
+        if (data.partnerLink && (
+          link.partnerName !== data.partnerLink.partnerName ||
+          link.partnerEmail !== data.partnerLink.partnerEmail ||
+          link.partnerPhotoURL !== data.partnerLink.partnerPhotoURL
+        )) {
+          onUpdateState('partnerLink', {
+            ...link,
+            ...data.partnerLink,
+          });
+        }
       } catch (err) {
-        console.warn('Failed to initialize partner thread listeners.', err);
+        console.warn('Failed to initialize partner thread.', err);
+        setNoteError('Unable to load notes right now.');
       }
-    })();
+    };
+
+    void syncPartnerThread();
+    const intervalId = window.setInterval(() => {
+      void syncPartnerThread();
+    }, 10000);
 
     return () => {
       cancelled = true;
-      if (unsubPlaces) unsubPlaces();
-      if (unsubMemories) unsubMemories();
-      if (unsubThread) unsubThread();
+      window.clearInterval(intervalId);
     };
-  }, [state.user?.uid, state.partnerLink, canSyncCloud, onUpdateState]);
+  }, [state.user?.uid, state.partnerLink, canSyncCloud, onUpdateState, state.entitlement?.plan_tier]);
 
   const handleSendPartnerNote = async () => {
     if (!noteInput.trim()) {
       setNoteError('Please enter a note before sending.');
       return;
     }
-    if (!canSyncCloud || !db || !state.user?.uid) {
+    if (!canSyncCloud || !state.user?.uid) {
       setNoteError('Please sign in to send notes.');
       return;
     }
@@ -580,30 +483,16 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     setNoteSending(true);
     const uid = state.user.uid;
     const link = state.partnerLink;
-    const threadId = getPartnerThreadId(uid, link.partnerUserId);
-    const notesRef = collection(db, 'partnerThreads', threadId, 'notes');
-
     const createdByName = state.user.displayName || state.user.email || 'You';
-    const noteId = `${Date.now()}`;
-    const notePayload = {
-      text: noteInput.trim(),
-      createdAt: new Date().toISOString(),
-      createdBy: uid,
-      createdByName,
-    };
 
     try {
       await ensurePartnerThread(uid, link.partnerUserId);
-      await setDoc(doc(notesRef, noteId), notePayload);
-      await setDoc(doc(db, 'partnerThreads', threadId), { updatedAt: serverTimestamp() }, { merge: true });
+      const savedNote = await savePartnerThreadNote(noteInput.trim(), createdByName);
+      setPartnerNotes((prev) => [...prev, savedNote].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
       setNoteInput('');
     } catch (err: any) {
       console.warn('Failed to send partner note.', err);
-      if (err?.code === 'permission-denied') {
-        setNoteError('Permission denied. Please re-link your partner.');
-      } else {
-        setNoteError('Failed to send note. Please try again.');
-      }
+      setNoteError('Failed to send note. Please try again.');
     } finally {
       setNoteSending(false);
     }
@@ -1303,23 +1192,21 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   };
 
   const handleAddPartnerPlace = async (groupPlace: GroupPlace) => {
-    if (!canSyncCloud || !db || !state.user?.uid || !state.partnerLink?.partnerUserId) {
+    if (!canSyncCloud || !state.user?.uid || !state.partnerLink?.partnerUserId) {
       alert('Please sign in and link a partner first.');
       return;
     }
     try {
-      const threadId = await ensurePartnerThread(state.user.uid, state.partnerLink.partnerUserId);
-      const placeRef = doc(db, 'partnerThreads', threadId, 'sharedPlaces', groupPlace.placeId);
-      await setDoc(placeRef, groupPlace, { merge: true });
-      await setDoc(doc(db, 'partnerThreads', threadId), { updatedAt: serverTimestamp() }, { merge: true });
+      await ensurePartnerThread(state.user.uid, state.partnerLink.partnerUserId);
+      await savePartnerThreadPlace(groupPlace);
+      onUpdateState('partnerSharedPlaces', [
+        groupPlace,
+        ...(state.partnerSharedPlaces || []).filter((place) => place.placeId !== groupPlace.placeId),
+      ]);
       alert(`Added "${groupPlace.placeName}" to Partner Plans!`);
     } catch (err: any) {
       console.warn('Failed to save partner shared place.', err);
-      if (err?.code === 'permission-denied') {
-        alert('Permission denied. Please re-link your partner.');
-      } else {
-        alert('Failed to add to Partner Plans. Please try again.');
-      }
+      alert('Failed to add to Partner Plans. Please try again.');
     }
   };
 
@@ -1402,26 +1289,15 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     const newMemory: Memory = { ...memory, id: Date.now().toString() };
     onUpdateState('memories', [...state.memories, newMemory]);
     import('../src/services/gamification').then(m => { m.awardPoints('save_memory'); m.invalidateGamificationCache(); }).catch(() => {});
-    if (canSyncCloud && db && state.partnerLink?.status === 'accepted' && state.partnerLink.partnerUserId && memory.sharedWithPartner && state.user?.uid) {
-      const threadId = getPartnerThreadId(state.user.uid, state.partnerLink.partnerUserId);
-      const sharedRef = doc(db, 'partnerThreads', threadId, 'sharedMemories', newMemory.id);
-      const payload: Omit<Memory, 'id'> = {
-        placeId: newMemory.placeId,
-        placeName: newMemory.placeName,
-        photoUrl: newMemory.photoUrl,
-        photoUrls: newMemory.photoUrls,
-        photoThumbUrl: newMemory.photoThumbUrl,
-        photoThumbUrls: newMemory.photoThumbUrls,
-        caption: newMemory.caption,
-        taggedFriends: newMemory.taggedFriends,
-        date: newMemory.date,
-        sharedWithPartner: true,
-        circleIds: newMemory.circleIds,
-        geo: newMemory.geo,
-      };
+    if (canSyncCloud && state.partnerLink?.status === 'accepted' && state.partnerLink.partnerUserId && memory.sharedWithPartner && state.user?.uid) {
       ensurePartnerThread(state.user.uid, state.partnerLink.partnerUserId)
-        .then(() => setDoc(sharedRef, payload, { merge: true }))
-        .then(() => setDoc(doc(db, 'partnerThreads', threadId), { updatedAt: serverTimestamp() }, { merge: true }))
+        .then(() => savePartnerThreadMemory({
+          ...newMemory,
+          sharedWithPartner: true,
+        }))
+        .then(() => {
+          setPartnerSharedMemories((prev) => [{ ...newMemory, sharedWithPartner: true }, ...prev.filter((item) => item.id !== newMemory.id)]);
+        })
         .catch((err) => console.warn('Failed to share memory with partner.', err));
     }
 
@@ -1628,21 +1504,16 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
       state.entitlement?.plan_tier === 'family' &&
       state.partnerLink?.status === 'accepted' &&
       state.partnerLink?.partnerUserId &&
-      state.user?.uid &&
-      db
+      state.user?.uid
     ) {
-      const threadId = getPartnerThreadId(state.user.uid, state.partnerLink.partnerUserId);
       const resetDate = state.familyPool?.ai_requests_reset_date || state.entitlement?.ai_requests_reset_date || getNextResetDate();
       try {
-        await setDoc(doc(db, 'partnerThreads', threadId), {
-          entitlementPool: {
-            plan_tier: 'family',
-            ai_requests_this_month: increment(1),
-            ai_requests_reset_date: resetDate,
-          },
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-        onUpdateState('familyPool', {
+        const nextPool = await savePartnerThreadFamilyPool({
+          plan_tier: 'family',
+          ai_requests_this_month: (state.familyPool?.ai_requests_this_month || 0) + 1,
+          ai_requests_reset_date: resetDate,
+        });
+        onUpdateState('familyPool', nextPool || {
           ai_requests_this_month: (state.familyPool?.ai_requests_this_month || 0) + 1,
           ai_requests_reset_date: resetDate,
         });
@@ -2719,12 +2590,10 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
           hasLinkedPartner={hasLinkedPartner}
           partnerName={partnerName || undefined}
           onShareToPartner={hasLinkedPartner ? async (memory) => {
-            if (!db || !state.user?.uid || !partnerUserId) return;
-            const threadId = getPartnerThreadId(state.user.uid, partnerUserId);
-            const sharedRef = doc(db, 'partnerThreads', threadId, 'sharedMemories', memory.id);
-            await setDoc(sharedRef, {
+            if (!state.user?.uid || !partnerUserId) return;
+            await savePartnerThreadMemory({
               ...memory,
-              sharedAt: Timestamp.now(),
+              sharedAt: new Date().toISOString(),
               sharedBy: state.user.uid,
               sharedWithPartner: true,
             }).catch((err) => console.warn('Failed to share memory with partner.', err));

@@ -117,6 +117,41 @@ type PostgresSavedPlaceRow = {
   place_raw: unknown;
 };
 
+type PostgresPartnerThreadRow = {
+  id: string;
+  status: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type PostgresPartnerThreadNoteRow = {
+  id: string;
+  thread_id: string;
+  author_user_id: string | null;
+  body: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+  author_display_name?: string | null;
+  author_email?: string | null;
+};
+
+type PostgresPartnerThreadPlaceRow = {
+  place_id: string;
+  added_by_user_id: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+};
+
+type PostgresPartnerThreadMemoryRow = {
+  id: string;
+  author_user_id: string | null;
+  raw: unknown;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
 const CLIENT_WRITABLE_ENTITLEMENT_KEYS = new Set([
   'gemini_credits_used',
   'gemini_credits_limit',
@@ -628,6 +663,42 @@ async function saveUserFieldData(userId: string, key: string, value: unknown): P
   await db.collection('users').doc(userId).set(payload, { merge: true });
 }
 
+async function setUserEntitlementData(userId: string, entitlement: Record<string, any>): Promise<void> {
+  const cleanedEntitlement = stripUndefinedDeep(entitlement);
+  if (isPostgresEnabled) {
+    const currentRow = await ensurePostgresUserRow(userId);
+    const nextProfile = parsePgJson<Record<string, any>>(currentRow.profile, {});
+    const nextPartnerLink = parsePgJson<Record<string, any>>(currentRow.partner_link, {});
+    const nextSettings = parsePgJson<Record<string, any>>(currentRow.settings, {});
+    const nextRaw = parsePgJson<Record<string, any>>(currentRow.raw, {});
+    await pgQuery(
+      `
+        update users
+        set profile = $2::jsonb,
+            entitlement = $3::jsonb,
+            partner_link = $4::jsonb,
+            settings = $5::jsonb,
+            raw = $6::jsonb,
+            updated_at = now()
+        where id = $1
+      `,
+      [
+        userId,
+        JSON.stringify(nextProfile),
+        JSON.stringify(isRecord(cleanedEntitlement) ? cleanedEntitlement : {}),
+        JSON.stringify(nextPartnerLink),
+        JSON.stringify(nextSettings),
+        JSON.stringify(nextRaw),
+      ],
+    );
+    return;
+  }
+
+  await db.collection('users').doc(userId).set({
+    entitlement: cleanedEntitlement || {},
+  }, { merge: true });
+}
+
 function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> {
   const payload = parsePgJson<Record<string, any>>(row.payload, {});
   const placeRaw = parsePgJson<Record<string, any>>(row.place_raw, {});
@@ -759,6 +830,399 @@ async function deleteSavedPlaceData(userId: string, placeId: string): Promise<vo
   }
 
   await db.collection('users').doc(userId).collection('savedPlaces').doc(placeId).delete();
+}
+
+function getPartnerThreadIdForUsers(userIdA: string, userIdB: string): string {
+  return [userIdA, userIdB].sort().join('_');
+}
+
+function getUserProfileSnapshot(row: PostgresUserRow): { displayName: string | null; email: string | null; photoURL: string | null } {
+  const profile = parsePgJson<Record<string, any>>(row.profile, {});
+  return {
+    displayName: row.display_name || profile.displayName || null,
+    email: row.email || profile.email || null,
+    photoURL: row.photo_url || profile.photoURL || null,
+  };
+}
+
+async function getUserPartnerLink(userId: string): Promise<Record<string, any> | null> {
+  if (isPostgresEnabled) {
+    const row = await ensurePostgresUserRow(userId);
+    const partnerLink = parsePgJson<Record<string, any>>(row.partner_link, {});
+    return Object.keys(partnerLink).length > 0 ? partnerLink : null;
+  }
+
+  const userDoc = await db.collection('users').doc(userId).get();
+  if (!userDoc.exists) return null;
+  const userData = userDoc.data() || {};
+  return userData.partnerLink ? { ...userData.partnerLink } : null;
+}
+
+async function hydratePartnerLink(partnerLink: Record<string, any> | null): Promise<Record<string, any> | null> {
+  if (!partnerLink?.partnerUserId) return partnerLink;
+
+  if (isPostgresEnabled) {
+    const partnerRow = await ensurePostgresUserRow(String(partnerLink.partnerUserId));
+    const partnerProfile = getUserProfileSnapshot(partnerRow);
+    return {
+      ...partnerLink,
+      partnerName: partnerLink.partnerName || partnerProfile.displayName || partnerProfile.email || 'Partner',
+      partnerEmail: partnerLink.partnerEmail || partnerProfile.email || undefined,
+      partnerPhotoURL: partnerLink.partnerPhotoURL || partnerProfile.photoURL || undefined,
+    };
+  }
+
+  const partnerDoc = await db.collection('users').doc(String(partnerLink.partnerUserId)).get();
+  if (!partnerDoc.exists) return partnerLink;
+  const partnerData = partnerDoc.data() || {};
+  const partnerProfile = partnerData.profile || {};
+  return {
+    ...partnerLink,
+    partnerName: partnerLink.partnerName || partnerProfile.displayName || partnerProfile.email || 'Partner',
+    partnerEmail: partnerLink.partnerEmail || partnerProfile.email || undefined,
+    partnerPhotoURL: partnerLink.partnerPhotoURL || partnerProfile.photoURL || undefined,
+  };
+}
+
+async function findPartnerByInviteCode(inviteCode: string, excludingUserId: string): Promise<{ id: string; partnerLink: Record<string, any>; profile: { displayName: string | null; email: string | null; photoURL: string | null } } | null> {
+  if (isPostgresEnabled) {
+    const result = await pgQuery<PostgresUserRow>(
+      `
+        select *
+        from users
+        where upper(coalesce(partner_link->>'inviteCode', '')) = upper($1)
+          and id <> $2
+        limit 1
+      `,
+      [inviteCode, excludingUserId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      partnerLink: parsePgJson<Record<string, any>>(row.partner_link, {}),
+      profile: getUserProfileSnapshot(row),
+    };
+  }
+
+  const snap = await db.collection('users')
+    .where('partnerLink.inviteCode', '==', inviteCode)
+    .get();
+  const match = snap.docs.find((docSnap) => docSnap.id !== excludingUserId);
+  if (!match) return null;
+  const partnerData = match.data() || {};
+  const partnerProfile = partnerData.profile || {};
+  return {
+    id: match.id,
+    partnerLink: partnerData.partnerLink || {},
+    profile: {
+      displayName: partnerProfile.displayName || null,
+      email: partnerProfile.email || null,
+      photoURL: partnerProfile.photoURL || null,
+    },
+  };
+}
+
+async function ensurePartnerThreadRecord(userId: string, partnerUserId: string): Promise<string> {
+  const threadId = getPartnerThreadIdForUsers(userId, partnerUserId);
+
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        insert into partner_threads (id, status, raw, created_at, updated_at)
+        values ($1, 'active', '{}'::jsonb, now(), now())
+        on conflict (id) do update
+        set status = 'active',
+            updated_at = now()
+      `,
+      [threadId],
+    );
+
+    await pgQuery(
+      `
+        insert into partner_thread_members (thread_id, user_id, role, raw, created_at)
+        values
+          ($1, $2, 'member', '{}'::jsonb, now()),
+          ($1, $3, 'member', '{}'::jsonb, now())
+        on conflict (thread_id, user_id) do update
+        set role = excluded.role
+      `,
+      [threadId, userId, partnerUserId],
+    );
+
+    return threadId;
+  }
+
+  const threadRef = db.collection('partnerThreads').doc(threadId);
+  const threadSnap = await threadRef.get();
+  if (!threadSnap.exists) {
+    await threadRef.set({
+      members: [userId, partnerUserId],
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      status: 'active',
+    });
+  } else if ((threadSnap.data() || {}).status === 'closed') {
+    await threadRef.set({ status: 'active', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+  return threadId;
+}
+
+function mapPartnerThreadNote(row: PostgresPartnerThreadNoteRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    text: row.body || raw.text || '',
+    createdAt: raw.createdAt || toIsoString(row.created_at) || new Date().toISOString(),
+    createdBy: row.author_user_id || raw.createdBy || '',
+    createdByName: raw.createdByName || row.author_display_name || row.author_email || 'Partner',
+  };
+}
+
+function mapPartnerThreadPlace(row: PostgresPartnerThreadPlaceRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    ...raw,
+    placeId: raw.placeId || row.place_id,
+    addedBy: raw.addedBy || row.added_by_user_id || '',
+    addedAt: raw.addedAt || toIsoString(row.created_at) || new Date().toISOString(),
+  };
+}
+
+function mapPartnerThreadMemory(row: PostgresPartnerThreadMemoryRow): Record<string, any> {
+  const raw = parsePgJson<Record<string, any>>(row.raw, {});
+  return {
+    id: row.id,
+    ...raw,
+    date: raw.date || toIsoString(row.created_at) || new Date().toISOString(),
+  };
+}
+
+async function loadPartnerThreadState(userId: string): Promise<{
+  partnerLink: Record<string, any> | null;
+  notes: Record<string, any>[];
+  sharedPlaces: Record<string, any>[];
+  sharedMemories: Record<string, any>[];
+  familyPool: Record<string, any> | null;
+}> {
+  const partnerLink = await hydratePartnerLink(await getUserPartnerLink(userId));
+  if (!partnerLink?.partnerUserId || partnerLink.status !== 'accepted') {
+    return {
+      partnerLink,
+      notes: [],
+      sharedPlaces: [],
+      sharedMemories: [],
+      familyPool: null,
+    };
+  }
+
+  const threadId = await ensurePartnerThreadRecord(userId, String(partnerLink.partnerUserId));
+
+  if (isPostgresEnabled) {
+    const [threadResult, notesResult, placesResult, memoriesResult] = await Promise.all([
+      pgQuery<PostgresPartnerThreadRow>(
+        `select * from partner_threads where id = $1 limit 1`,
+        [threadId],
+      ),
+      pgQuery<PostgresPartnerThreadNoteRow>(
+        `
+          select
+            n.*,
+            u.display_name as author_display_name,
+            u.email as author_email
+          from partner_thread_notes n
+          left join users u on u.id = n.author_user_id
+          where n.thread_id = $1
+          order by n.created_at asc
+        `,
+        [threadId],
+      ),
+      pgQuery<PostgresPartnerThreadPlaceRow>(
+        `
+          select *
+          from partner_thread_places
+          where thread_id = $1
+          order by created_at desc
+        `,
+        [threadId],
+      ),
+      pgQuery<PostgresPartnerThreadMemoryRow>(
+        `
+          select *
+          from partner_thread_memories
+          where thread_id = $1
+          order by created_at desc
+        `,
+        [threadId],
+      ),
+    ]);
+
+    const threadRaw = parsePgJson<Record<string, any>>(threadResult.rows[0]?.raw, {});
+    return {
+      partnerLink,
+      notes: notesResult.rows.map(mapPartnerThreadNote),
+      sharedPlaces: placesResult.rows.map(mapPartnerThreadPlace),
+      sharedMemories: memoriesResult.rows.map(mapPartnerThreadMemory),
+      familyPool: isRecord(threadRaw.entitlementPool) ? threadRaw.entitlementPool : null,
+    };
+  }
+
+  const threadRef = db.collection('partnerThreads').doc(threadId);
+  const [threadDoc, notesSnap, placesSnap, memoriesSnap] = await Promise.all([
+    threadRef.get(),
+    threadRef.collection('notes').get(),
+    threadRef.collection('sharedPlaces').get(),
+    threadRef.collection('sharedMemories').get(),
+  ]);
+
+  const threadData = threadDoc.exists ? (threadDoc.data() || {}) : {};
+  return {
+    partnerLink,
+    notes: notesSnap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
+      .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''))),
+    sharedPlaces: placesSnap.docs
+      .map((docSnap) => (docSnap.data() || {}) as Record<string, any>)
+      .sort((a: Record<string, any>, b: Record<string, any>) => String(b.addedAt || '').localeCompare(String(a.addedAt || ''))),
+    sharedMemories: memoriesSnap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
+      .sort((a: Record<string, any>, b: Record<string, any>) => String(b.date || '').localeCompare(String(a.date || ''))),
+    familyPool: isRecord(threadData.entitlementPool) ? threadData.entitlementPool : null,
+  };
+}
+
+async function savePartnerThreadNote(userId: string, text: string, createdByName: string): Promise<Record<string, any>> {
+  const partnerLink = await getUserPartnerLink(userId);
+  if (!partnerLink?.partnerUserId || partnerLink.status !== 'accepted') {
+    throw new Error('partner_not_linked');
+  }
+  const threadId = await ensurePartnerThreadRecord(userId, String(partnerLink.partnerUserId));
+  const note = {
+    id: `${Date.now()}`,
+    text,
+    createdAt: new Date().toISOString(),
+    createdBy: userId,
+    createdByName,
+  };
+
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        insert into partner_thread_notes (id, thread_id, author_user_id, body, raw, created_at, updated_at)
+        values ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, now())
+      `,
+      [note.id, threadId, userId, note.text, JSON.stringify(note), note.createdAt],
+    );
+    await pgQuery(
+      `update partner_threads set updated_at = now() where id = $1`,
+      [threadId],
+    );
+    return note;
+  }
+
+  await db.collection('partnerThreads').doc(threadId).collection('notes').doc(note.id).set(note);
+  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return note;
+}
+
+async function savePartnerThreadPlace(userId: string, placeId: string, place: Record<string, any>): Promise<void> {
+  const partnerLink = await getUserPartnerLink(userId);
+  if (!partnerLink?.partnerUserId || partnerLink.status !== 'accepted') {
+    throw new Error('partner_not_linked');
+  }
+  const threadId = await ensurePartnerThreadRecord(userId, String(partnerLink.partnerUserId));
+  const payload = stripUndefinedDeep({ ...place, placeId }) || {};
+
+  if (isPostgresEnabled) {
+    await ensurePostgresUserRow(userId);
+    await ensurePostgresPlace(placeId, String((payload as Record<string, any>).placeName || (payload as Record<string, any>).name || 'Shared place'));
+    await pgQuery(
+      `
+        insert into partner_thread_places (thread_id, place_id, added_by_user_id, raw, created_at)
+        values ($1, $2, $3, $4::jsonb, now())
+        on conflict (thread_id, place_id) do update
+        set raw = excluded.raw,
+            added_by_user_id = excluded.added_by_user_id
+      `,
+      [threadId, placeId, userId, JSON.stringify(payload)],
+    );
+    await pgQuery(
+      `update partner_threads set updated_at = now() where id = $1`,
+      [threadId],
+    );
+    return;
+  }
+
+  await db.collection('partnerThreads').doc(threadId).collection('sharedPlaces').doc(placeId).set(payload, { merge: true });
+  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
+async function savePartnerThreadMemory(userId: string, memoryId: string, memory: Record<string, any>): Promise<void> {
+  const partnerLink = await getUserPartnerLink(userId);
+  if (!partnerLink?.partnerUserId || partnerLink.status !== 'accepted') {
+    throw new Error('partner_not_linked');
+  }
+  const threadId = await ensurePartnerThreadRecord(userId, String(partnerLink.partnerUserId));
+  const payload = stripUndefinedDeep(memory) || {};
+
+  if (isPostgresEnabled) {
+    await pgQuery(
+      `
+        insert into partner_thread_memories (id, thread_id, author_user_id, raw, created_at, updated_at)
+        values ($1, $2, $3, $4::jsonb, now(), now())
+        on conflict (id) do update
+        set raw = excluded.raw,
+            updated_at = now()
+      `,
+      [memoryId, threadId, userId, JSON.stringify(payload)],
+    );
+    await pgQuery(
+      `update partner_threads set updated_at = now() where id = $1`,
+      [threadId],
+    );
+    return;
+  }
+
+  await db.collection('partnerThreads').doc(threadId).collection('sharedMemories').doc(memoryId).set(payload, { merge: true });
+  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
+async function savePartnerThreadFamilyPool(userId: string, familyPool: Record<string, any>): Promise<Record<string, any>> {
+  const partnerLink = await getUserPartnerLink(userId);
+  if (!partnerLink?.partnerUserId || partnerLink.status !== 'accepted') {
+    throw new Error('partner_not_linked');
+  }
+  const threadId = await ensurePartnerThreadRecord(userId, String(partnerLink.partnerUserId));
+  const cleanedPool = stripUndefinedDeep(familyPool);
+  const nextPool = isRecord(cleanedPool) ? cleanedPool : {};
+
+  if (isPostgresEnabled) {
+    const threadResult = await pgQuery<PostgresPartnerThreadRow>(
+      `select * from partner_threads where id = $1 limit 1`,
+      [threadId],
+    );
+    const currentRaw = parsePgJson<Record<string, any>>(threadResult.rows[0]?.raw, {});
+    const mergedRaw = {
+      ...currentRaw,
+      entitlementPool: mergeNestedRecord(isRecord(currentRaw.entitlementPool) ? currentRaw.entitlementPool : {}, nextPool),
+    };
+    await pgQuery(
+      `
+        update partner_threads
+        set raw = $2::jsonb,
+            updated_at = now()
+        where id = $1
+      `,
+      [threadId, JSON.stringify(mergedRaw)],
+    );
+    return mergedRaw.entitlementPool;
+  }
+
+  await db.collection('partnerThreads').doc(threadId).set({
+    entitlementPool: nextPool,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return nextPool;
 }
 
 function mapPostgresPlaceClaim(row: PostgresPlaceClaimRow) {
@@ -2190,44 +2654,62 @@ app.get('/api/paystack/config', (_req, res) => {
 // Requires Firebase Auth token for security
 app.post('/api/partner/unlink', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.uid!; // Verified user from auth token
-    
-    console.log('[FamPals API] Partner unlink request for user:', userId);
-    
-    // Fetch user's current partnerLink to get the actual partnerId
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User not found' });
+    const userId = req.uid!;
+    const currentPartnerLink = await getUserPartnerLink(userId);
+    const actualPartnerUserId = currentPartnerLink?.partnerUserId ? String(currentPartnerLink.partnerUserId) : null;
+
+    if (isPostgresEnabled) {
+      const currentRow = await ensurePostgresUserRow(userId);
+      const currentRaw = parsePgJson<Record<string, any>>(currentRow.raw, {});
+      await pgQuery(
+        `
+          update users
+          set partner_link = '{}'::jsonb,
+              raw = $2::jsonb,
+              updated_at = now()
+          where id = $1
+        `,
+        [userId, JSON.stringify({ ...currentRaw, partnerLink: undefined })],
+      );
+
+      if (actualPartnerUserId) {
+        const partnerRow = await ensurePostgresUserRow(actualPartnerUserId);
+        const partnerRaw = parsePgJson<Record<string, any>>(partnerRow.raw, {});
+        await pgQuery(
+          `
+            update users
+            set partner_link = '{}'::jsonb,
+                raw = $2::jsonb,
+                updated_at = now()
+            where id = $1
+          `,
+          [actualPartnerUserId, JSON.stringify({ ...partnerRaw, partnerLink: undefined })],
+        );
+
+        await pgQuery(
+          `
+            update partner_threads
+            set status = 'closed',
+                updated_at = now()
+            where id = $1
+          `,
+          [getPartnerThreadIdForUsers(userId, actualPartnerUserId)],
+        );
+      }
+
+      return res.json({ success: true });
     }
-    
-    const userData = userDoc.data() || {};
-    const currentPartnerLink = userData.partnerLink;
-    
-    // Get the actual partner from user's document (not from request body for security)
-    const actualPartnerUserId = currentPartnerLink?.partnerUserId;
-    
-    console.log('[FamPals API] Validated partner from user doc:', actualPartnerUserId);
-    
+
     const batch = db.batch();
-    
-    // Clear current user's partnerLink
     const userRef = db.collection('users').doc(userId);
     batch.update(userRef, { partnerLink: FieldValue.delete() });
-    
-    // If there's a valid partner link, clear their partnerLink too
     if (actualPartnerUserId) {
       const partnerRef = db.collection('users').doc(actualPartnerUserId);
       batch.update(partnerRef, { partnerLink: FieldValue.delete() });
-      
-      // Also mark the partner thread as closed
-      const threadId = [userId, actualPartnerUserId].sort().join('_');
-      const threadRef = db.collection('partnerThreads').doc(threadId);
+      const threadRef = db.collection('partnerThreads').doc(getPartnerThreadIdForUsers(userId, actualPartnerUserId));
       batch.set(threadRef, { status: 'closed', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     }
-    
     await batch.commit();
-    console.log('[FamPals API] Partner unlink successful');
-    
     res.json({ success: true });
   } catch (err: any) {
     console.error('[FamPals API] Partner unlink failed:', err?.message || err);
@@ -2239,28 +2721,8 @@ app.post('/api/partner/unlink', requireAuth, async (req: AuthenticatedRequest, r
 // Requires Firebase Auth token for security
 app.get('/api/partner/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.uid!; // Verified user from auth token
-    
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.json({ partnerLink: null });
-    }
-    
-    const userData = userDoc.data() || {};
-    const partnerLink = userData.partnerLink ? { ...userData.partnerLink } : null;
-    
-    // If linked, also get partner's current profile info
-    if (partnerLink?.partnerUserId) {
-      const partnerDoc = await db.collection('users').doc(partnerLink.partnerUserId).get();
-      if (partnerDoc.exists) {
-        const partnerData = partnerDoc.data() || {};
-        const partnerProfile = partnerData.profile || {};
-        partnerLink.partnerName = partnerProfile.displayName || partnerLink.partnerName;
-        partnerLink.partnerEmail = partnerProfile.email || partnerLink.partnerEmail;
-        partnerLink.partnerPhotoURL = partnerProfile.photoURL || partnerLink.partnerPhotoURL;
-      }
-    }
-    
+    const userId = req.uid!;
+    const partnerLink = await hydratePartnerLink(await getUserPartnerLink(userId));
     res.json({ partnerLink });
   } catch (err: any) {
     console.error('[FamPals API] Partner status fetch failed:', err?.message || err);
@@ -2273,99 +2735,232 @@ app.get('/api/partner/status', requireAuth, async (req: AuthenticatedRequest, re
 // Validates that the invite code matches the partner's pending code
 app.post('/api/partner/link', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.uid!; // Verified user from auth token
-    const { partnerUserId, partnerName, selfName, inviteCode } = req.body;
-    
-    if (!partnerUserId) {
-      return res.status(400).json({ error: 'Missing partnerUserId' });
+    const userId = req.uid!;
+    const inviteCode = typeof req.body?.inviteCode === 'string' ? req.body.inviteCode.trim().toUpperCase() : '';
+    let partnerUserId = typeof req.body?.partnerUserId === 'string' ? req.body.partnerUserId.trim() : '';
+    const selfName = typeof req.body?.selfName === 'string' ? req.body.selfName.trim() : '';
+
+    let partnerMatch: { id: string; partnerLink: Record<string, any>; profile: { displayName: string | null; email: string | null; photoURL: string | null } } | null = null;
+    if (inviteCode) {
+      partnerMatch = await findPartnerByInviteCode(inviteCode, userId);
+      if (!partnerMatch) {
+        return res.status(404).json({ error: 'No partner found with this code' });
+      }
+      partnerUserId = partnerMatch.id;
     }
-    
-    console.log('[FamPals API] Partner link request:', { userId, partnerUserId });
-    
-    // Get partner's info and validate invite code
+
+    if (!partnerUserId) {
+      return res.status(400).json({ error: 'Missing partnerUserId or inviteCode' });
+    }
+
+    if (!partnerMatch) {
+      const partnerLink = await getUserPartnerLink(partnerUserId);
+      if (!partnerLink) {
+        return res.status(404).json({ error: 'Partner not found' });
+      }
+      if (inviteCode && String(partnerLink.inviteCode || '').toUpperCase() !== inviteCode) {
+        return res.status(403).json({ error: 'Invalid invite code' });
+      }
+      const hydrated = await hydratePartnerLink(partnerLink);
+      partnerMatch = {
+        id: partnerUserId,
+        partnerLink,
+        profile: {
+          displayName: hydrated?.partnerName || null,
+          email: hydrated?.partnerEmail || null,
+          photoURL: hydrated?.partnerPhotoURL || null,
+        },
+      };
+    }
+
+    const partnerInviteCode = String(partnerMatch.partnerLink?.inviteCode || '').trim();
+    const partnerStatus = String(partnerMatch.partnerLink?.status || '').trim();
+    if (!partnerInviteCode || partnerStatus === 'accepted') {
+      return res.status(400).json({ error: 'Partner does not have a pending invite or is already linked' });
+    }
+
+    if (inviteCode && partnerInviteCode.toUpperCase() !== inviteCode) {
+      return res.status(403).json({ error: 'Invalid invite code' });
+    }
+
+    if (isPostgresEnabled) {
+      const userRow = await ensurePostgresUserRow(userId);
+      const partnerRow = await ensurePostgresUserRow(partnerUserId);
+      const userProfile = getUserProfileSnapshot(userRow);
+      const partnerProfile = getUserProfileSnapshot(partnerRow);
+      const linkedAt = new Date().toISOString();
+
+      const nextUserLink = {
+        status: 'accepted',
+        inviteCode: partnerInviteCode,
+        linkedAt,
+        partnerUserId,
+        partnerName: partnerProfile.displayName || partnerProfile.email || 'Partner',
+        partnerEmail: partnerProfile.email || undefined,
+        partnerPhotoURL: partnerProfile.photoURL || undefined,
+      };
+      const nextPartnerLink = {
+        status: 'accepted',
+        inviteCode: partnerInviteCode,
+        linkedAt,
+        partnerUserId: userId,
+        partnerName: userProfile.displayName || selfName || userProfile.email || 'Partner',
+        partnerEmail: userProfile.email || undefined,
+        partnerPhotoURL: userProfile.photoURL || undefined,
+      };
+
+      const userRaw = parsePgJson<Record<string, any>>(userRow.raw, {});
+      const partnerRaw = parsePgJson<Record<string, any>>(partnerRow.raw, {});
+      await pgQuery(
+        `
+          update users
+          set partner_link = $2::jsonb,
+              raw = $3::jsonb,
+              updated_at = now()
+          where id = $1
+        `,
+        [userId, JSON.stringify(nextUserLink), JSON.stringify({ ...userRaw, partnerLink: nextUserLink })],
+      );
+      await pgQuery(
+        `
+          update users
+          set partner_link = $2::jsonb,
+              raw = $3::jsonb,
+              updated_at = now()
+          where id = $1
+        `,
+        [partnerUserId, JSON.stringify(nextPartnerLink), JSON.stringify({ ...partnerRaw, partnerLink: nextPartnerLink })],
+      );
+
+      await ensurePartnerThreadRecord(userId, partnerUserId);
+      return res.json({ success: true, partnerLink: nextUserLink });
+    }
+
     const partnerDoc = await db.collection('users').doc(partnerUserId).get();
     if (!partnerDoc.exists) {
       return res.status(404).json({ error: 'Partner not found' });
     }
     const partnerData = partnerDoc.data() || {};
     const partnerProfile = partnerData.profile || {};
-    
-    // Validate invite code matches partner's pending invite
-    const partnerInviteCode = partnerData.partnerLink?.inviteCode;
-    const partnerStatus = partnerData.partnerLink?.status;
-    
-    // If invite code is provided, validate it matches
-    if (inviteCode && partnerInviteCode !== inviteCode) {
-      console.log('[FamPals API] Invite code mismatch:', { provided: inviteCode, expected: partnerInviteCode });
-      return res.status(403).json({ error: 'Invalid invite code' });
-    }
-    
-    // Validate partner has a pending invite code
-    if (!partnerInviteCode || partnerStatus === 'accepted') {
-      console.log('[FamPals API] Partner does not have a pending invite or is already linked');
-      return res.status(400).json({ error: 'Partner does not have a pending invite or is already linked' });
-    }
-    
-    // Get current user's info to update partner's record
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.exists ? userDoc.data() : {};
     const userProfile = userData?.profile || {};
-    
     const batch = db.batch();
-    
-    // Update current user's partnerLink to accepted
     const userRef = db.collection('users').doc(userId);
     batch.set(userRef, {
       partnerLink: {
         status: 'accepted',
-        inviteCode: partnerData.partnerLink?.inviteCode || '',
-        createdAt: FieldValue.serverTimestamp(),
+        inviteCode: partnerInviteCode,
+        linkedAt: new Date().toISOString(),
         partnerUserId,
-        partnerName: partnerProfile.displayName || partnerName || 'Partner',
+        partnerName: partnerProfile.displayName || partnerProfile.email || 'Partner',
         partnerEmail: partnerProfile.email,
         partnerPhotoURL: partnerProfile.photoURL,
-      }
+      },
     }, { merge: true });
-    
-    // Update partner's partnerLink to mark them as linked
     const partnerRef = db.collection('users').doc(partnerUserId);
     batch.set(partnerRef, {
       partnerLink: {
         status: 'accepted',
-        inviteCode: partnerData.partnerLink?.inviteCode || '',
-        createdAt: FieldValue.serverTimestamp(),
+        inviteCode: partnerInviteCode,
+        linkedAt: new Date().toISOString(),
         partnerUserId: userId,
-        partnerName: userProfile.displayName || selfName || 'Partner',
+        partnerName: userProfile.displayName || selfName || userProfile.email || 'Partner',
         partnerEmail: userProfile.email,
         partnerPhotoURL: userProfile.photoURL,
-      }
+      },
     }, { merge: true });
-    
-    // Create partner thread
-    const threadId = [userId, partnerUserId].sort().join('_');
-    const threadRef = db.collection('partnerThreads').doc(threadId);
+    const threadRef = db.collection('partnerThreads').doc(getPartnerThreadIdForUsers(userId, partnerUserId));
     batch.set(threadRef, {
       members: [userId, partnerUserId],
       createdAt: FieldValue.serverTimestamp(),
       status: 'active',
     }, { merge: true });
-    
     await batch.commit();
-    console.log('[FamPals API] Partner link successful');
-    
     res.json({ 
       success: true, 
       partnerLink: {
         status: 'accepted',
         partnerUserId,
-        partnerName: partnerProfile.displayName || partnerName || 'Partner',
-        partnerEmail: partnerProfile.email,
-        partnerPhotoURL: partnerProfile.photoURL,
+        partnerName: partnerMatch.profile.displayName || partnerMatch.profile.email || 'Partner',
+        partnerEmail: partnerMatch.profile.email || undefined,
+        partnerPhotoURL: partnerMatch.profile.photoURL || undefined,
       }
     });
   } catch (err: any) {
     console.error('[FamPals API] Partner link failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to link partner', details: err?.message });
+  }
+});
+
+app.get('/api/partner/thread', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const data = await loadPartnerThreadState(userId);
+    return res.json(data);
+  } catch (err: any) {
+    console.error('[FamPals API] Partner thread load failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to load partner thread' });
+  }
+});
+
+app.post('/api/partner/thread/notes', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    const createdByName = typeof req.body?.createdByName === 'string' ? req.body.createdByName.trim() : 'You';
+    if (!text) {
+      return res.status(400).json({ error: 'text is required' });
+    }
+    const note = await savePartnerThreadNote(userId, text, createdByName);
+    return res.json({ note });
+  } catch (err: any) {
+    console.error('[FamPals API] Partner note save failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save partner note' });
+  }
+});
+
+app.put('/api/partner/thread/places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const placeId = String(req.params.placeId || '').trim();
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const place = isRecord(req.body?.place) ? req.body.place : {};
+    await savePartnerThreadPlace(userId, placeId, place);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Partner shared place save failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save partner shared place' });
+  }
+});
+
+app.put('/api/partner/thread/memories/:memoryId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const memoryId = String(req.params.memoryId || '').trim();
+    if (!memoryId) {
+      return res.status(400).json({ error: 'memoryId is required' });
+    }
+    const memory = isRecord(req.body?.memory) ? req.body.memory : {};
+    await savePartnerThreadMemory(userId, memoryId, memory);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPals API] Partner shared memory save failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save partner shared memory' });
+  }
+});
+
+app.patch('/api/partner/thread/family-pool', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const familyPool = isRecord(req.body?.familyPool) ? req.body.familyPool : {};
+    const nextFamilyPool = await savePartnerThreadFamilyPool(userId, familyPool);
+    return res.json({ familyPool: nextFamilyPool });
+  } catch (err: any) {
+    console.error('[FamPals API] Partner family pool save failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to save family pool' });
   }
 });
 
@@ -3138,6 +3733,24 @@ app.delete('/api/user/me/saved-places/:placeId', requireAuth, async (req: Authen
   } catch (err: any) {
     console.error('[FamPals API] Failed to delete saved place:', err?.message || err);
     return res.status(500).json({ error: 'Failed to delete saved place' });
+  }
+});
+
+app.post('/api/dev/grant-pro', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Not available in production' });
+    }
+    const userId = req.uid!;
+    const entitlement = isRecord(req.body?.entitlement) ? req.body.entitlement : null;
+    if (!entitlement) {
+      return res.status(400).json({ error: 'entitlement is required' });
+    }
+    await setUserEntitlementData(userId, entitlement);
+    return res.json({ ok: true, entitlement });
+  } catch (err: any) {
+    console.error('[FamPals API] Failed to grant dev pro entitlement:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to grant dev entitlement' });
   }
 });
 
