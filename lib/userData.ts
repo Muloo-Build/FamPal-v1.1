@@ -1,4 +1,5 @@
-import { auth, db, doc, onSnapshot, setDoc, deleteField, collection, deleteDoc } from './firebase';
+// userData.ts — Railway Postgres API only. Firebase is used for auth only.
+import { auth } from './firebase';
 import type { SavedPlace } from '../types';
 
 type Unsubscribe = () => void;
@@ -12,31 +13,19 @@ function stripUndefined(value: any): any {
   if (value === null) return null;
   if (value instanceof Date) return value.toISOString();
   if (value && typeof value === 'object' && typeof value.toDate === 'function') {
-    try {
-      return value.toDate().toISOString();
-    } catch {
-      return undefined;
-    }
+    try { return value.toDate().toISOString(); } catch { return undefined; }
   }
   if (value && typeof value === 'object' && typeof value.toMillis === 'function') {
-    try {
-      return new Date(value.toMillis()).toISOString();
-    } catch {
-      return undefined;
-    }
+    try { return new Date(value.toMillis()).toISOString(); } catch { return undefined; }
   }
   if (Array.isArray(value)) {
-    return value
-      .map((item) => stripUndefined(item))
-      .filter((item) => item !== undefined);
+    return value.map((item) => stripUndefined(item)).filter((item) => item !== undefined);
   }
   if (typeof value === 'object') {
     const cleaned: Record<string, any> = {};
     Object.entries(value).forEach(([key, val]) => {
       const nextVal = stripUndefined(val);
-      if (nextVal !== undefined) {
-        cleaned[key] = nextVal;
-      }
+      if (nextVal !== undefined) cleaned[key] = nextVal;
     });
     return cleaned;
   }
@@ -61,12 +50,6 @@ function sanitizeClientEntitlementPatch(value: any): Record<string, any> {
   return patch;
 }
 
-function shouldUseBackend(uid: string): boolean {
-  if (DEV_AUTH_BYPASS) return false;
-  if (!API_BASE) return false;
-  return auth?.currentUser?.uid === uid;
-}
-
 async function getAuthHeaders(uid: string): Promise<Record<string, string>> {
   const currentUser = auth?.currentUser;
   if (!currentUser || currentUser.uid !== uid) {
@@ -83,20 +66,13 @@ async function apiRequest<T>(uid: string, path: string, init?: RequestInit): Pro
   const headers = await getAuthHeaders(uid);
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      ...headers,
-      ...(init?.headers || {}),
-    },
+    headers: { ...headers, ...(init?.headers || {}) },
   });
-
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(body || `request_failed_${response.status}`);
   }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -108,7 +84,6 @@ function sortSavedPlaces(places: SavedPlace[]): SavedPlace[] {
     if (typeof value.toMillis === 'function') return value.toMillis();
     return 0;
   };
-
   return [...places].sort((a, b) => toMillis(b.savedAt) - toMillis(a.savedAt));
 }
 
@@ -140,159 +115,68 @@ function createPollingSubscription<T>(
     } catch (err) {
       console.error('userData sync failed', err);
       if (!active) return;
-      // Only emit error value on the first load — subsequent failures keep existing state
-      if (!hasSucceeded) {
-        onData(onErrorValue);
-      }
+      if (!hasSucceeded) onData(onErrorValue);
     }
   };
 
   void load();
-  pollTimer = window.setInterval(() => {
-    void load();
-  }, USER_SYNC_POLL_MS);
+  pollTimer = window.setInterval(() => { void load(); }, USER_SYNC_POLL_MS);
 
   return () => {
     active = false;
-    if (pollTimer !== null) {
-      window.clearInterval(pollTimer);
-    }
+    if (pollTimer !== null) window.clearInterval(pollTimer);
   };
 }
 
-export function listenToUserDoc(uid: string, onData: (data: any | null) => void): Unsubscribe {
-  if (shouldUseBackend(uid) && typeof window !== 'undefined') {
-    return createPollingSubscription(() => fetchUserState(uid), onData, null);
-  }
+// ─── Public API ────────────────────────────────────────────────────────────────
 
-  if (!db) {
+export function listenToUserDoc(uid: string, onData: (data: any | null) => void): Unsubscribe {
+  if (DEV_AUTH_BYPASS) {
     onData(null);
     return () => {};
   }
-
-  const userDocRef = doc(db, 'users', uid);
-  const unsub = onSnapshot(userDocRef, (snap) => {
-    onData(snap.exists() ? snap.data() : null);
-  }, (err: any) => {
-    console.error('listenToUserDoc error', err);
-    onData(null);
-  });
-
-  return () => {
-    unsub();
-  };
+  return createPollingSubscription(() => fetchUserState(uid), onData, null);
 }
 
 export async function upsertUserProfile(uid: string, profile: Record<string, any>) {
   if (DEV_AUTH_BYPASS) return;
-
-  if (shouldUseBackend(uid)) {
-    await apiRequest(uid, '/api/user/me/profile', {
-      method: 'PUT',
-      body: JSON.stringify({ profile: stripUndefined(profile) || {} }),
-    });
-    return;
-  }
-
-  if (!db) {
-    return;
-  }
-
-  const userDocRef = doc(db, 'users', uid);
-  await setDoc(userDocRef, {
-    profile: stripUndefined(profile) || {},
-    lastLoginAt: new Date().toISOString(),
-  }, { merge: true });
+  await apiRequest(uid, '/api/user/me/profile', {
+    method: 'PUT',
+    body: JSON.stringify({ profile: stripUndefined(profile) || {} }),
+  });
 }
 
 export async function saveUserField(uid: string, key: string, value: any) {
   if (DEV_AUTH_BYPASS) return;
-
   const cleanedValue = key === 'entitlement'
     ? sanitizeClientEntitlementPatch(value)
     : stripUndefined(value);
-
-  if (shouldUseBackend(uid)) {
-    await apiRequest(uid, '/api/user/me/field', {
-      method: 'PATCH',
-      body: JSON.stringify({ key, value: cleanedValue }),
-    });
-    return;
-  }
-
-  if (!db) {
-    return;
-  }
-
-  const userDocRef = doc(db, 'users', uid);
-  const payload: Record<string, any> = {};
-  payload[key] = cleanedValue === undefined ? deleteField() : cleanedValue;
-  await setDoc(userDocRef, payload, { merge: true });
+  await apiRequest(uid, '/api/user/me/field', {
+    method: 'PATCH',
+    body: JSON.stringify({ key, value: cleanedValue }),
+  });
 }
 
 export function listenToSavedPlaces(uid: string, onData: (places: SavedPlace[]) => void): Unsubscribe {
-  if (shouldUseBackend(uid) && typeof window !== 'undefined') {
-    return createPollingSubscription(() => fetchSavedPlaces(uid), onData, []);
-  }
-
-  if (!db) {
+  if (DEV_AUTH_BYPASS) {
     onData([]);
     return () => {};
   }
-
-  const ref = collection(db, 'users', uid, 'savedPlaces');
-  const unsub = onSnapshot(ref, (snap) => {
-    const places = snap.docs.map((docSnap) => {
-      const data = docSnap.data() as SavedPlace;
-      return {
-        placeId: data.placeId || docSnap.id,
-        ...data,
-      };
-    });
-    onData(sortSavedPlaces(places));
-  }, (err) => {
-    console.error('listenToSavedPlaces error', err);
-    onData([]);
-  });
-
-  return () => unsub();
+  return createPollingSubscription(() => fetchSavedPlaces(uid), onData, []);
 }
 
 export async function upsertSavedPlace(uid: string, place: SavedPlace): Promise<void> {
   if (DEV_AUTH_BYPASS) return;
-
   const payload = stripUndefined(place);
-
-  if (shouldUseBackend(uid)) {
-    await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(place.placeId)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ place: payload }),
-    });
-    return;
-  }
-
-  if (!db) {
-    return;
-  }
-
-  const ref = doc(db, 'users', uid, 'savedPlaces', place.placeId);
-  await setDoc(ref, payload, { merge: true });
+  await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(place.placeId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ place: payload }),
+  });
 }
 
 export async function deleteSavedPlace(uid: string, placeId: string): Promise<void> {
   if (DEV_AUTH_BYPASS) return;
-
-  if (shouldUseBackend(uid)) {
-    await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(placeId)}`, {
-      method: 'DELETE',
-    });
-    return;
-  }
-
-  if (!db) {
-    return;
-  }
-
-  const ref = doc(db, 'users', uid, 'savedPlaces', placeId);
-  await deleteDoc(ref);
+  await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(placeId)}`, {
+    method: 'DELETE',
+  });
 }
