@@ -21,6 +21,7 @@
     "@capacitor/cli": "^8.1.0",
     "@capacitor/core": "^8.1.0",
     "@capacitor/ios": "^8.0.2",
+    "@capacitor/push-notifications": "^6.0.0",
     "@google/genai": "^1.38.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

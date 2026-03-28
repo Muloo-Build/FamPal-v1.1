@@ -94,18 +94,26 @@ const Header: React.FC<HeaderProps> = ({ setView, user, locationName, onSearch, 
 
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
-              <svg className="w-5 h-5 text-[#0052FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex items-center gap-2 absolute inset-y-0 left-4 pointer-events-none">
+              {/* AI indicator badge */}
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#0052ff]/10 border border-[#0052ff]/20">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <circle cx="5" cy="5" r="4" fill="#0052ff" opacity="0.3"/>
+                  <circle cx="5" cy="5" r="2" fill="#0052ff"/>
+                </svg>
+                <span className="text-[9px] font-black text-[#0052ff] uppercase tracking-wider">AI</span>
+              </div>
+              <svg className="w-4 h-4 text-[#0052FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
             <input
               type="text"
-              placeholder="Search places..."
+              placeholder='Ask anything — "wine farm with a playground near me"'
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              className="stitch-input w-full h-14 pl-14 pr-12 font-semibold text-sm"
+              className="stitch-input w-full h-14 pl-28 pr-12 font-semibold text-sm"
             />
             {searchQuery && (
               <button

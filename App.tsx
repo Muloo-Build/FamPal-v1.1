@@ -1,6 +1,7 @@
 
 // FamPal v1.1 - Family Activity Discovery App
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { initialisePushNotifications } from './src/utils/pushNotifications';
 import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   auth,
@@ -418,6 +419,10 @@ const App: React.FC = () => {
         setState(prev => ({ ...prev, isAuthenticated: true, user: serializedUser }));
         setView((prev) => (prev === 'login' ? 'dashboard' : prev));
         authDebugLog('Auth user present, moving out of login state');
+
+        // Initialize push notifications for authenticated user
+        initialisePushNotifications().catch(console.warn);
+
         // Don't set view here - wait for Firestore to check onboarding status first
 
         // Safety timeout to prevent stuck loading state if Firestore fails

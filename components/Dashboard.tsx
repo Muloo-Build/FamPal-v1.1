@@ -10,6 +10,8 @@ import GroupDetail from './GroupDetail';
 import PlanBilling from './PlanBilling';
 import MustHavesSheet from './MustHavesSheet';
 import { UpgradePrompt, LimitIndicator } from './UpgradePrompt';
+import { SkeletonCardList } from '../src/components/SkeletonCard';
+import { EmptyState } from '../src/components/EmptyState';
 import { searchExploreIntent, getExploreIntentSubtitle, getPlaceDetails, textSearchPlaces } from '../placesService';
 import { getLimits, canSavePlace, canCreateCircle, isPaidTier, getNextResetDate, getCurrentUsageMonth } from '../lib/entitlements';
 import { updateLocation, updateRadius, updateCategory, updateActiveCircle } from '../lib/profileSync';
@@ -1838,18 +1840,16 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
                     ))}
                   </div>
                 ) : (
-                  <div className="py-12 text-center bg-white rounded-2xl border border-slate-100">
-                    <p className="text-slate-500 font-semibold">No places found for "{searchQuery}"</p>
-                    <p className="text-slate-400 text-sm mt-1">Try a different name or expand your search radius</p>
-                  </div>
+                  <EmptyState type="no-results" query={searchQuery} onClearFilters={() => {
+                    setSearchQuery('');
+                    setActiveFilters({});
+                  }} />
                 )}
               </div>
             )}
 
             {!isSearchMode && (loading || !userLocation) ? (
-              <div className="py-24 text-center text-slate-300 font-black text-xs uppercase tracking-widest">
-                {!userLocation ? 'Getting your location...' : 'Finding adventures...'}
-              </div>
+              <SkeletonCardList count={5} />
             ) : !isSearchMode ? (
               <div className="space-y-4 mt-4">
                 {visibleExplorePlaces.map(place => (

@@ -1,18 +1,8 @@
-<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0F0A2A"/>
-      <stop offset="100%" stop-color="#2D1B69"/>
-    </linearGradient>
-    <linearGradient id="fGrad" x1="20" y1="15" x2="65" y2="85" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#A855F7"/>
-      <stop offset="50%" stop-color="#D946EF"/>
-      <stop offset="100%" stop-color="#EC4899"/>
-    </linearGradient>
-  </defs>
-  <rect width="100" height="100" rx="22" fill="url(#bg)"/>
-  <path d="M28 22 C28 18, 31 15, 35 15 L70 15 C74 15, 74 15, 74 19 L74 23 C74 27, 74 27, 70 27 L42 27 L42 43 L64 43 C68 43, 68 43, 68 47 L68 51 C68 55, 68 55, 64 55 L42 55 L42 80 C42 84, 42 84, 38 84 L32 84 C28 84, 28 84, 28 80 Z" fill="url(#fGrad)" rx="4"/>
-  <path d="M68 15 C68 15, 76 15, 76 23 L76 24" stroke="url(#fGrad)" stroke-width="10" stroke-linecap="round" fill="none"/>
-  <circle cx="76" cy="18" r="8" fill="#F97316"/>
-  <circle cx="76" cy="16" r="3" fill="#0F0A2A"/>
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M24 4C16.268 4 10 10.268 10 18c0 11 14 26 14 26s14-15 14-26c0-7.732-6.268-14-14-14z" fill="#0052FF"/>
+  <circle cx="24" cy="18" r="8" fill="white"/>
+  <circle cx="24" cy="14.5" r="2.2" fill="#FF8C00"/>
+  <path d="M21 18.5c0-1.657 1.343-3 3-3s3 1.343 3 3v3.5h-6v-3.5z" fill="#FF8C00"/>
+  <path d="M18.5 19.5l2.5 1" stroke="#FF8C00" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M29.5 19.5l-2.5 1" stroke="#FF8C00" stroke-width="1.5" stroke-linecap="round"/>
 </svg>

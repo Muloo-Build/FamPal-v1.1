@@ -12,13 +12,10 @@ const MemoryCreate = (): null => null;
 
 import { CircleDoc } from '../lib/circles';
 import PlaceAccessibilitySection from '../src/components/PlaceAccessibilitySection';
-import AccessibilityContributionModal from '../src/components/AccessibilityContributionModal';
 import { getAccessibilityHintsFromGoogle } from '../src/utils/accessibilityHints';
 import PlaceFamilyFacilitiesSection from '../src/components/PlaceFamilyFacilitiesSection';
-import FamilyFacilitiesContributionModal from '../src/components/FamilyFacilitiesContributionModal';
 import { getFamilyFacilitiesHintsFromGoogle } from '../src/utils/familyFacilitiesHints';
 import PlacePetFriendlySection from '../src/components/PlacePetFriendlySection';
-import PetFriendlyContributionModal from '../src/components/PetFriendlyContributionModal';
 import { getPetFriendlyHintsFromGoogle } from '../src/utils/petFriendlyHints';
 import { getPublicHints } from '../src/utils/publicHints';
 import { fetchOsmVenueData, OsmVenueData } from '../src/utils/osmService';
@@ -1349,32 +1346,6 @@ const VenueProfile: React.FC<VenueProfileProps> = ({
  </div>
  
  {/* Floating Home Button removed from here — rendered globally in App.tsx */}
- <AccessibilityContributionModal
- isOpen={showAccessibilityModal}
- onClose={() => {
- setShowAccessibilityModal(false);
- setAccessibilityModalScrollTarget('manual');
- setAccessibilityHighlightedSuggested([]);
- }}
- confirmedFeatures={confirmedAccessibility}
- suggestedFeatures={suggestedGoogleHints}
- initialScrollTarget={accessibilityModalScrollTarget}
- highlightedSuggestedFeatures={accessibilityHighlightedSuggested}
- onSubmit={handleSubmitAccessibility}
- />
- <FamilyFacilitiesContributionModal
- isOpen={showFamilyFacilitiesModal}
- onClose={() => {
- setShowFamilyFacilitiesModal(false);
- setFamilyModalScrollTarget('manual');
- setFamilyHighlightedSuggested([]);
- }}
- confirmedFeatures={confirmedFamilyFacilities}
- suggestedFeatures={suggestedFamilyHints}
- initialScrollTarget={familyModalScrollTarget}
- highlightedSuggestedFeatures={familyHighlightedSuggested}
- onSubmit={handleSubmitFamilyFacilities}
- />
  {accessibilityToast && (
  <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40">
  <div
@@ -1401,20 +1372,6 @@ const VenueProfile: React.FC<VenueProfileProps> = ({
  </div>
  </div>
  )}
- <PetFriendlyContributionModal
- isOpen={showPetFriendlyModal}
- onClose={() => {
- setShowPetFriendlyModal(false);
- setPetFriendlyModalScrollTarget('manual');
- setPetFriendlyHighlightedSuggested([]);
- }}
- confirmedFeatures={(place.petFriendly || []).filter(
- (item) => item.value === true && item.confidence !== 'unknown'
- )}
- initialScrollTarget={petFriendlyModalScrollTarget}
- highlightedSuggestedFeatures={petFriendlyHighlightedSuggested}
- onSubmit={handleSubmitPetFriendly}
- />
  {petFriendlyToast && (
  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
  <div

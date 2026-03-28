@@ -22,6 +22,25 @@
   --fp-radius-btn: 9999px;
 }
 
+[data-theme="dark"] {
+  --fp-primary: #4d8dff;
+  --fp-primary-deep: #0052ff;
+  --fp-secondary: #ffaa33;
+  --fp-surface: #0f1117;
+  --fp-surface-low: #161b27;
+  --fp-surface-card: #1a2030;
+  --fp-ink: #f0f4ff;
+  --fp-body: #94a3b8;
+  --fp-outline-soft: rgba(240, 244, 255, 0.08);
+  --fp-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+/* Apply dark surface to body */
+[data-theme="dark"] body {
+  background: var(--fp-surface);
+  color: var(--fp-ink);
+}
+
 /* Kinship Modern utility classes */
 .fp-btn-primary {
   @apply bg-[#0052ff] text-white font-bold rounded-full px-6 py-3
