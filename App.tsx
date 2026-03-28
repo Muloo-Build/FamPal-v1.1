@@ -6,6 +6,7 @@ import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-do
 import {
   auth,
   googleProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   onAuthStateChanged,
