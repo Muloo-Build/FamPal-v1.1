@@ -3,7 +3,7 @@ import { db, auth } from './firebase';
 import { AppState, UserPreferences, SavedLocation, ExploreIntent, getDefaultEntitlement } from '../types';
 import { saveUserField } from './userData';
 
-const GUEST_PREFERENCES_KEY = 'fampals_guest_preferences';
+const GUEST_PREFERENCES_KEY = 'fampal_guest_preferences';
 const DEBOUNCE_MS = 1500;
 
 let debounceTimer: NodeJS.Timeout | null = null;
@@ -34,17 +34,19 @@ export function clearGuestPreferences(): void {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
 export async function loadUserProfile(userId: string): Promise<Partial<AppState> | null> {
-  if (!db) return null;
-  
   try {
-    const userDocRef = doc(db, 'users', userId);
-    const snap = await getDoc(userDocRef);
-    
-    if (snap.exists()) {
-      return snap.data() as Partial<AppState>;
-    }
-    return null;
+    const user = auth?.currentUser;
+    if (!user) return null;
+    const token = await user.getIdToken();
+    const res = await fetch(`${API_BASE}/api/user/${userId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return null;
+    const { data } = await res.json();
+    return data as Partial<AppState>;
   } catch (error) {
     console.error('Failed to load user profile:', error);
     return null;

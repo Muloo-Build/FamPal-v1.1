@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { GoogleGenAI } from '@google/genai';
 import type { CorsOptions, CorsOptionsDelegate } from 'cors';
 import { createRequire } from 'module';
 import crypto from 'crypto';
@@ -61,9 +62,9 @@ if (!process.env.PLACES_API_KEY && placesFromAlias) {
 const PLACES_API_KEY = process.env.PLACES_API_KEY || '';
 
 // Log startup immediately
-console.log('[FamPals API] Starting server...');
-console.log('[FamPals API] PORT env:', process.env.PORT);
-console.log('[FamPals API] NODE_ENV:', process.env.NODE_ENV);
+console.log('[FamPal API] Starting server...');
+console.log('[FamPal API] PORT env:', process.env.PORT);
+console.log('[FamPal API] NODE_ENV:', process.env.NODE_ENV);
 
 // Extend Express Request type to include verified user
 interface AuthenticatedRequest extends Request {
@@ -243,7 +244,7 @@ const allowedOrigins = [
 
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction && !PLACES_API_KEY) {
-  console.warn('[FamPals API] PLACES_API_KEY is missing in production; places endpoints will remain unavailable until GOOGLE_PLACES_API_KEY or PLACES_API_KEY is configured.');
+  console.warn('[FamPal API] PLACES_API_KEY is missing in production; places endpoints will remain unavailable until GOOGLE_PLACES_API_KEY or PLACES_API_KEY is configured.');
 }
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
@@ -279,7 +280,7 @@ const PLACES_SEARCH_CACHE_TTL_MS = Math.min(300000, Math.max(60000, Number(proce
 const PLACES_DETAILS_CACHE_TTL_MS = Math.min(300000, Math.max(60000, Number(process.env.PLACES_DETAILS_CACHE_TTL_MS || 180000)));
 const PLACES_CACHE_MAX_ENTRIES = Math.max(50, Number(process.env.PLACES_CACHE_MAX_ENTRIES || 400));
 
-console.log('[FamPals API] Startup config:', {
+console.log('[FamPal API] Startup config:', {
   port: process.env.PORT || 8080,
   appEnv: process.env.APP_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
   nodeEnv: process.env.NODE_ENV,
@@ -381,7 +382,7 @@ app.use('/api/places', (req, res, next) => {
   const start = Date.now();
   const route = req.path;
   res.on('finish', () => {
-    console.log('[FamPals Places] request', {
+    console.log('[FamPal Places] request', {
       route,
       method: req.method,
       status: res.statusCode,
@@ -402,18 +403,18 @@ try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       initializeApp({ credential: cert(serviceAccount) });
-      console.log('[FamPals API] Initialized with explicit service account');
+      console.log('[FamPal API] Initialized with explicit service account');
     } else {
       // Use ADC (works on Cloud Run, App Engine, Cloud Functions)
       initializeApp();
-      console.log('[FamPals API] Initialized with Application Default Credentials');
+      console.log('[FamPal API] Initialized with Application Default Credentials');
     }
   }
   db = getFirestore();
   adminAuth = getAuth();
-  console.log('[FamPals API] Firebase Admin SDK initialized successfully');
+  console.log('[FamPal API] Firebase Admin SDK initialized successfully');
 } catch (err) {
-  console.error('[FamPals API] Firebase Admin init error:', err);
+  console.error('[FamPal API] Firebase Admin init error:', err);
   process.exit(1);
 }
 
@@ -1857,7 +1858,7 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
     req.uid = decodedToken.uid;
     next();
   } catch (err: any) {
-    console.error('[FamPals API] Auth verification failed:', err?.message);
+    console.error('[FamPal API] Auth verification failed:', err?.message);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -1872,7 +1873,7 @@ function requireSchedulerAuth(req: Request, res: Response, next: NextFunction) {
     if (isProd) {
       return res.status(500).json({ error: 'PLACE_REFRESH_CRON_TOKEN is required in production' });
     }
-    console.warn('[FamPals Refresh] PLACE_REFRESH_CRON_TOKEN missing; allowing local/dev execution.');
+    console.warn('[FamPal Refresh] PLACE_REFRESH_CRON_TOKEN missing; allowing local/dev execution.');
     next();
     return;
   }
@@ -2223,7 +2224,7 @@ async function runPlaceRefreshJob(options: PlaceRefreshOptions = {}) {
 
   await Promise.all(workers);
   const elapsedMs = Date.now() - startedAt;
-  console.log('[FamPals Refresh] completed', {
+  console.log('[FamPal Refresh] completed', {
     dryRun,
     scannedCount: snap.size,
     staleCount: staleTargets.length,
@@ -2249,7 +2250,7 @@ async function runPlaceRefreshJob(options: PlaceRefreshOptions = {}) {
 }
 
 if (!PLACES_CONFIGURED) {
-  console.warn('[FamPals API] Google Places API key is not configured. Places search will fail.');
+  console.warn('[FamPal API] Google Places API key is not configured. Places search will fail.');
 }
 
 const LEGACY_PLACE_TYPE_MAP: Record<string, string | undefined> = {
@@ -2464,7 +2465,7 @@ app.post('/api/admin/places/refresh-stale', requireSchedulerAuth, async (req, re
     const result = await runPlaceRefreshJob({ dryRun, limit });
     return res.status(result.ok ? 200 : 500).json(result);
   } catch (error: any) {
-    console.error('[FamPals Refresh] endpoint error', error);
+    console.error('[FamPal Refresh] endpoint error', error);
     return res.status(500).json({ ok: false, error: error?.message || 'place_refresh_failed' });
   }
 });
@@ -2640,8 +2641,8 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
     const dedupeMap = new Map<string, any>();
     const perQueryCounts: Record<string, { pagesFetched: number; fetchedResults: number; uniqueAdded: number }> = {};
 
-    console.log(`[FamPals API] Explore intent selected: ${intent}`);
-    console.log(`[FamPals API] Intent queries executed: ${queries.join(', ')}`);
+    console.log(`[FamPal API] Explore intent selected: ${intent}`);
+    console.log(`[FamPal API] Intent queries executed: ${queries.join(', ')}`);
 
     for (const query of queries) {
       let nextPageToken: string | undefined = undefined;
@@ -2674,7 +2675,7 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
           continue;
         }
         if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-          console.warn('[FamPals API] Intent text search warning:', data.status, data.error_message || '');
+          console.warn('[FamPal API] Intent text search warning:', data.status, data.error_message || '');
           break;
         }
 
@@ -2707,8 +2708,8 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
           uniqueAdded: dedupeMap.size - beforeUnique,
         };
 
-        console.log(`[FamPals API] Query "${query}" page ${page}: ${results.length} results, hasMore: ${!!data.next_page_token}`);
-        console.log(`[FamPals API] Merge count after "${query}" page ${page}: ${mergedResults.length} before filter, ${filtered.length} after filter`);
+        console.log(`[FamPal API] Query "${query}" page ${page}: ${results.length} results, hasMore: ${!!data.next_page_token}`);
+        console.log(`[FamPal API] Merge count after "${query}" page ${page}: ${mergedResults.length} before filter, ${filtered.length} after filter`);
 
         nextPageToken = data.next_page_token || undefined;
         hasMore = !!nextPageToken;
@@ -2731,7 +2732,7 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
       return includesAny(text, definition.keywordInclude);
     });
 
-    console.log(`[FamPals API] Intent "${intent}" filter counts: before=${mergedResults.length}, after=${filteredResults.length}`);
+    console.log(`[FamPal API] Intent "${intent}" filter counts: before=${mergedResults.length}, after=${filteredResults.length}`);
 
     return res.json({
       places: filteredResults,
@@ -2964,7 +2965,7 @@ app.post('/api/paystack/init-payment', async (req, res) => {
       return res.status(400).json({ error: 'Invalid plan' });
     }
     
-    const reference = `fampals_${plan}_${userId}_${Date.now()}`;
+    const reference = `fampal_${plan}_${userId}_${Date.now()}`;
     const callbackUrl = `${APP_URL}?payment_callback=true&ref=${reference}`;
     
     let paystackPayload: any = {
@@ -3087,7 +3088,7 @@ app.post('/api/paystack/webhook', async (req: any, res) => {
           const userDoc = userSnapshot.docs[0];
           const userData = userDoc.data() as Record<string, any> | undefined;
           if (isAdminAccessUser(userData)) {
-            console.log(`[FamPals API] Skipped cancellation downgrade for admin/review account ${userDoc.id}`);
+            console.log(`[FamPal API] Skipped cancellation downgrade for admin/review account ${userDoc.id}`);
             break;
           }
           await userDoc.ref.update({
@@ -3110,7 +3111,7 @@ app.post('/api/paystack/webhook', async (req: any, res) => {
             const userDoc = userSnapshot.docs[0];
             const userData = userDoc.data() as Record<string, any> | undefined;
             if (isAdminAccessUser(userData)) {
-              console.log(`[FamPals API] Skipped expiry downgrade for admin/review account ${userDoc.id}`);
+              console.log(`[FamPal API] Skipped expiry downgrade for admin/review account ${userDoc.id}`);
               break;
             }
             await userDoc.ref.update({
@@ -3184,7 +3185,7 @@ async function updateUserEntitlement(
   const existingUserDoc = await userRef.get();
   const existingUserData = existingUserDoc.exists ? (existingUserDoc.data() as Record<string, any>) : undefined;
   if (isAdminAccessUser(existingUserData)) {
-    console.log(`[FamPals API] Skipped entitlement overwrite for admin/review account ${userId}`);
+    console.log(`[FamPal API] Skipped entitlement overwrite for admin/review account ${userId}`);
     return;
   }
   const now = new Date();
@@ -3285,7 +3286,7 @@ app.post('/api/partner/unlink', requireAuth, async (req: AuthenticatedRequest, r
     await batch.commit();
     res.json({ success: true });
   } catch (err: any) {
-    console.error('[FamPals API] Partner unlink failed:', err?.message || err);
+    console.error('[FamPal API] Partner unlink failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to unlink partner', details: err?.message });
   }
 });
@@ -3298,7 +3299,7 @@ app.get('/api/partner/status', requireAuth, async (req: AuthenticatedRequest, re
     const partnerLink = await hydratePartnerLink(await getUserPartnerLink(userId));
     res.json({ partnerLink });
   } catch (err: any) {
-    console.error('[FamPals API] Partner status fetch failed:', err?.message || err);
+    console.error('[FamPal API] Partner status fetch failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch partner status', details: err?.message });
   }
 });
@@ -3461,7 +3462,7 @@ app.post('/api/partner/link', requireAuth, async (req: AuthenticatedRequest, res
       }
     });
   } catch (err: any) {
-    console.error('[FamPals API] Partner link failed:', err?.message || err);
+    console.error('[FamPal API] Partner link failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to link partner', details: err?.message });
   }
 });
@@ -3472,7 +3473,7 @@ app.get('/api/partner/thread', requireAuth, async (req: AuthenticatedRequest, re
     const data = await loadPartnerThreadState(userId);
     return res.json(data);
   } catch (err: any) {
-    console.error('[FamPals API] Partner thread load failed:', err?.message || err);
+    console.error('[FamPal API] Partner thread load failed:', err?.message || err);
     return res.status(500).json({ error: 'Failed to load partner thread' });
   }
 });
@@ -3488,7 +3489,7 @@ app.post('/api/partner/thread/notes', requireAuth, async (req: AuthenticatedRequ
     const note = await savePartnerThreadNote(userId, text, createdByName);
     return res.json({ note });
   } catch (err: any) {
-    console.error('[FamPals API] Partner note save failed:', err?.message || err);
+    console.error('[FamPal API] Partner note save failed:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save partner note' });
   }
 });
@@ -3504,7 +3505,7 @@ app.put('/api/partner/thread/places/:placeId', requireAuth, async (req: Authenti
     await savePartnerThreadPlace(userId, placeId, place);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Partner shared place save failed:', err?.message || err);
+    console.error('[FamPal API] Partner shared place save failed:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save partner shared place' });
   }
 });
@@ -3520,7 +3521,7 @@ app.put('/api/partner/thread/memories/:memoryId', requireAuth, async (req: Authe
     await savePartnerThreadMemory(userId, memoryId, memory);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Partner shared memory save failed:', err?.message || err);
+    console.error('[FamPal API] Partner shared memory save failed:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save partner shared memory' });
   }
 });
@@ -3532,7 +3533,7 @@ app.patch('/api/partner/thread/family-pool', requireAuth, async (req: Authentica
     const nextFamilyPool = await savePartnerThreadFamilyPool(userId, familyPool);
     return res.json({ familyPool: nextFamilyPool });
   } catch (err: any) {
-    console.error('[FamPals API] Partner family pool save failed:', err?.message || err);
+    console.error('[FamPal API] Partner family pool save failed:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save family pool' });
   }
 });
@@ -3600,7 +3601,7 @@ app.post('/api/place-claims', requireAuth, async (req: AuthenticatedRequest, res
         [placeId],
       );
 
-      console.log(`[FamPals API] Place claim submitted via Postgres: ${claimId} for place ${placeId} by ${userId}`);
+      console.log(`[FamPal API] Place claim submitted via Postgres: ${claimId} for place ${placeId} by ${userId}`);
       return res.json({ success: true, claimId });
     }
 
@@ -3646,10 +3647,10 @@ app.post('/api/place-claims', requireAuth, async (req: AuthenticatedRequest, res
       ownerStatus: 'pending',
     }, { merge: true });
 
-    console.log(`[FamPals API] Place claim submitted: ${docRef.id} for place ${placeId} by ${userId}`);
+    console.log(`[FamPal API] Place claim submitted: ${docRef.id} for place ${placeId} by ${userId}`);
     res.json({ success: true, claimId: docRef.id });
   } catch (err: any) {
-    console.error('[FamPals API] Place claim submission failed:', err?.message || err);
+    console.error('[FamPal API] Place claim submission failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to submit claim' });
   }
 });
@@ -3693,7 +3694,7 @@ app.get('/api/place-claims/my-claims', requireAuth, async (req: AuthenticatedReq
     });
     res.json({ claims });
   } catch (err: any) {
-    console.error('[FamPals API] Fetch my claims failed:', err?.message || err);
+    console.error('[FamPal API] Fetch my claims failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claims' });
   }
 });
@@ -3739,7 +3740,7 @@ app.get('/api/place-claims/place/:placeId', requireAuth, async (req: Authenticat
     const doc = snapshot.docs[0];
     res.json({ claim: { id: doc.id, ...doc.data() } });
   } catch (err: any) {
-    console.error('[FamPals API] Fetch place claim failed:', err?.message || err);
+    console.error('[FamPal API] Fetch place claim failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claim' });
   }
 });
@@ -3790,7 +3791,7 @@ app.get('/api/admin/place-claims', requireAuth, async (req: AuthenticatedRequest
     });
     res.json({ claims });
   } catch (err: any) {
-    console.error('[FamPals API] Admin fetch claims failed:', err?.message || err);
+    console.error('[FamPal API] Admin fetch claims failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claims' });
   }
 });
@@ -3856,7 +3857,7 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
           [`${claimData.place_id}_${claimData.user_id}`, claimData.place_id, claimData.user_id],
         );
 
-        console.log(`[FamPals API] Claim ${claimId} verified in Postgres for place ${claimData.place_id}`);
+        console.log(`[FamPal API] Claim ${claimId} verified in Postgres for place ${claimData.place_id}`);
       } else {
         await pgQuery(
           `
@@ -3875,7 +3876,7 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
           [claimData.place_id],
         );
 
-        console.log(`[FamPals API] Claim ${claimId} rejected in Postgres for place ${claimData.place_id}`);
+        console.log(`[FamPal API] Claim ${claimId} rejected in Postgres for place ${claimData.place_id}`);
       }
 
       return res.json({ success: true, status: action === 'verify' ? 'verified' : 'rejected' });
@@ -3916,7 +3917,7 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
         lastUpdatedAt: new Date().toISOString(),
       });
 
-      console.log(`[FamPals API] Claim ${claimId} verified for place ${claimData.placeId}`);
+      console.log(`[FamPal API] Claim ${claimId} verified for place ${claimData.placeId}`);
     } else {
       batch.update(claimRef, {
         status: 'rejected',
@@ -3929,13 +3930,13 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
         ownerStatus: 'none',
       }, { merge: true });
 
-      console.log(`[FamPals API] Claim ${claimId} rejected for place ${claimData.placeId}`);
+      console.log(`[FamPal API] Claim ${claimId} rejected for place ${claimData.placeId}`);
     }
 
     await batch.commit();
     res.json({ success: true, status: action === 'verify' ? 'verified' : 'rejected' });
   } catch (err: any) {
-    console.error('[FamPals API] Admin claim verification failed:', err?.message || err);
+    console.error('[FamPal API] Admin claim verification failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to process claim' });
   }
 });
@@ -3981,7 +3982,7 @@ app.get('/api/place-owner/:placeId', async (req: Request, res: Response) => {
       promotedUntil: data.promotedUntil || null,
     });
   } catch (err: any) {
-    console.error('[FamPals API] Fetch place owner info failed:', err?.message || err);
+    console.error('[FamPal API] Fetch place owner info failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch owner info' });
   }
 });
@@ -4034,7 +4035,7 @@ app.put('/api/place-owner/:placeId/content', requireAuth, async (req: Authentica
         [`${placeId}_${userId}`, placeId, userId, JSON.stringify(sanitized)],
       );
 
-      console.log(`[FamPals API] Owner content updated in Postgres for place ${placeId} by ${userId}`);
+      console.log(`[FamPal API] Owner content updated in Postgres for place ${placeId} by ${userId}`);
       return res.json({ success: true, ownerContent: sanitized });
     }
 
@@ -4067,10 +4068,10 @@ app.put('/api/place-owner/:placeId/content', requireAuth, async (req: Authentica
       lastUpdatedAt: new Date().toISOString(),
     }, { merge: true });
 
-    console.log(`[FamPals API] Owner content updated for place ${placeId} by ${userId}`);
+    console.log(`[FamPal API] Owner content updated for place ${placeId} by ${userId}`);
     res.json({ success: true, ownerContent: sanitized });
   } catch (err: any) {
-    console.error('[FamPals API] Owner content update failed:', err?.message || err);
+    console.error('[FamPal API] Owner content update failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to update content' });
   }
 });
@@ -4094,7 +4095,7 @@ app.post('/api/paystack/init-business-payment', requireAuth, async (req: Authent
     }
 
     const planConfig = PLANS['business_pro'];
-    const reference = `fampals_business_pro_${placeId}_${userId}_${Date.now()}`;
+    const reference = `fampal_business_pro_${placeId}_${userId}_${Date.now()}`;
     const callbackUrl = `${APP_URL}?payment_callback=true&ref=${reference}&type=business`;
 
     const paystackPayload: any = {
@@ -4130,17 +4131,17 @@ app.post('/api/paystack/init-business-payment', requireAuth, async (req: Authent
     const data = await response.json();
 
     if (!data.status) {
-      console.error('[FamPals API] Paystack init failed:', data);
+      console.error('[FamPal API] Paystack init failed:', data);
       return res.status(500).json({ error: 'Payment initialization failed' });
     }
 
-    console.log(`[FamPals API] Business payment initialized: ${reference}`);
+    console.log(`[FamPal API] Business payment initialized: ${reference}`);
     res.json({
       authorization_url: data.data.authorization_url,
       reference: data.data.reference,
     });
   } catch (err: any) {
-    console.error('[FamPals API] Business payment init failed:', err?.message || err);
+    console.error('[FamPal API] Business payment init failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to initialize payment' });
   }
 });
@@ -4217,12 +4218,12 @@ app.post('/api/paystack/verify-business', requireAuth, async (req: Authenticated
         );
       }
 
-      console.log(`[FamPals API] Business Pro activated for place ${placeId}`);
+      console.log(`[FamPal API] Business Pro activated for place ${placeId}`);
     }
 
     res.json({ success: true, status: 'active' });
   } catch (err: any) {
-    console.error('[FamPals API] Business payment verification failed:', err?.message || err);
+    console.error('[FamPal API] Business payment verification failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to verify payment' });
   }
 });
@@ -4234,7 +4235,7 @@ app.get('/api/circles', requireAuth, async (req: AuthenticatedRequest, res: Resp
     const circles = await listUserCirclesData(req.uid!);
     return res.json({ circles });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to list circles:', err?.message || err);
+    console.error('[FamPal API] Failed to list circles:', err?.message || err);
     return res.status(500).json({ error: 'Failed to list circles' });
   }
 });
@@ -4260,7 +4261,7 @@ app.post('/api/circles', requireAuth, async (req: AuthenticatedRequest, res: Res
     );
     return res.json({ circle });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to create circle:', err?.message || err);
+    console.error('[FamPal API] Failed to create circle:', err?.message || err);
     return res.status(500).json({ error: 'Failed to create circle' });
   }
 });
@@ -4282,7 +4283,7 @@ app.post('/api/circles/join', requireAuth, async (req: AuthenticatedRequest, res
     if (message === 'circle_not_found') {
       return res.status(404).json({ error: 'No circle found for that code.' });
     }
-    console.error('[FamPals API] Failed to join circle:', message);
+    console.error('[FamPal API] Failed to join circle:', message);
     return res.status(500).json({ error: 'Failed to join circle' });
   }
 });
@@ -4297,7 +4298,7 @@ app.get('/api/circles/:circleId/members', requireAuth, async (req: Authenticated
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to list circle members:', message);
+    console.error('[FamPal API] Failed to list circle members:', message);
     return res.status(500).json({ error: 'Failed to list circle members' });
   }
 });
@@ -4312,7 +4313,7 @@ app.get('/api/circles/:circleId/places', requireAuth, async (req: AuthenticatedR
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to list circle places:', message);
+    console.error('[FamPal API] Failed to list circle places:', message);
     return res.status(500).json({ error: 'Failed to list circle places' });
   }
 });
@@ -4332,7 +4333,7 @@ app.put('/api/circles/:circleId/places/:placeId', requireAuth, async (req: Authe
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to save circle place:', message);
+    console.error('[FamPal API] Failed to save circle place:', message);
     return res.status(500).json({ error: 'Failed to save circle place' });
   }
 });
@@ -4348,7 +4349,7 @@ app.delete('/api/circles/:circleId/places/:placeId', requireAuth, async (req: Au
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to remove circle place:', message);
+    console.error('[FamPal API] Failed to remove circle place:', message);
     return res.status(500).json({ error: 'Failed to remove circle place' });
   }
 });
@@ -4367,7 +4368,7 @@ app.get('/api/circles/:circleId/comments', requireAuth, async (req: Authenticate
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to list circle comments:', message);
+    console.error('[FamPal API] Failed to list circle comments:', message);
     return res.status(500).json({ error: 'Failed to list circle comments' });
   }
 });
@@ -4387,7 +4388,7 @@ app.post('/api/circles/:circleId/comments', requireAuth, async (req: Authenticat
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to add circle comment:', message);
+    console.error('[FamPal API] Failed to add circle comment:', message);
     return res.status(500).json({ error: 'Failed to add circle comment' });
   }
 });
@@ -4402,7 +4403,7 @@ app.get('/api/circles/:circleId/memories', requireAuth, async (req: Authenticate
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to list circle memories:', message);
+    console.error('[FamPal API] Failed to list circle memories:', message);
     return res.status(500).json({ error: 'Failed to list circle memories' });
   }
 });
@@ -4422,7 +4423,7 @@ app.put('/api/circles/:circleId/memories/:memoryId', requireAuth, async (req: Au
     if (message === 'circle_access_denied') {
       return res.status(403).json({ error: 'Circle access denied' });
     }
-    console.error('[FamPals API] Failed to save circle memory:', message);
+    console.error('[FamPal API] Failed to save circle memory:', message);
     return res.status(500).json({ error: 'Failed to save circle memory' });
   }
 });
@@ -4440,7 +4441,7 @@ app.delete('/api/circles/:circleId', requireAuth, async (req: AuthenticatedReque
     if (message === 'circle_not_found') {
       return res.status(404).json({ error: 'Circle not found' });
     }
-    console.error('[FamPals API] Failed to delete circle:', message);
+    console.error('[FamPal API] Failed to delete circle:', message);
     return res.status(500).json({ error: 'Failed to delete circle' });
   }
 });
@@ -4458,7 +4459,7 @@ app.post('/api/circles/:circleId/leave', requireAuth, async (req: AuthenticatedR
     if (message === 'circle_not_found') {
       return res.status(404).json({ error: 'Circle not found' });
     }
-    console.error('[FamPals API] Failed to leave circle:', message);
+    console.error('[FamPal API] Failed to leave circle:', message);
     return res.status(500).json({ error: 'Failed to leave circle' });
   }
 });
@@ -4469,7 +4470,7 @@ app.get('/api/user/me', requireAuth, async (req: AuthenticatedRequest, res: Resp
     const data = await loadUserState(userId);
     return res.json({ data });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to load user state:', err?.message || err);
+    console.error('[FamPal API] Failed to load user state:', err?.message || err);
     return res.status(500).json({ error: 'Failed to load user state' });
   }
 });
@@ -4481,7 +4482,7 @@ app.put('/api/user/me/profile', requireAuth, async (req: AuthenticatedRequest, r
     await upsertUserProfileData(userId, profile);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to save user profile:', err?.message || err);
+    console.error('[FamPal API] Failed to save user profile:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save user profile' });
   }
 });
@@ -4496,7 +4497,7 @@ app.patch('/api/user/me/field', requireAuth, async (req: AuthenticatedRequest, r
     await saveUserFieldData(userId, key, req.body?.value);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to save user field:', err?.message || err);
+    console.error('[FamPal API] Failed to save user field:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save user field' });
   }
 });
@@ -4507,7 +4508,7 @@ app.get('/api/user/me/saved-places', requireAuth, async (req: AuthenticatedReque
     const savedPlaces = await listSavedPlaces(userId);
     return res.json({ places: savedPlaces });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to load saved places:', err?.message || err);
+    console.error('[FamPal API] Failed to load saved places:', err?.message || err);
     return res.status(500).json({ error: 'Failed to load saved places' });
   }
 });
@@ -4523,7 +4524,7 @@ app.put('/api/user/me/saved-places/:placeId', requireAuth, async (req: Authentic
     await upsertSavedPlaceData(userId, place);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to save saved place:', err?.message || err);
+    console.error('[FamPal API] Failed to save saved place:', err?.message || err);
     return res.status(500).json({ error: 'Failed to save saved place' });
   }
 });
@@ -4538,7 +4539,7 @@ app.delete('/api/user/me/saved-places/:placeId', requireAuth, async (req: Authen
     await deleteSavedPlaceData(userId, placeId);
     return res.json({ ok: true });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to delete saved place:', err?.message || err);
+    console.error('[FamPal API] Failed to delete saved place:', err?.message || err);
     return res.status(500).json({ error: 'Failed to delete saved place' });
   }
 });
@@ -4556,10 +4557,234 @@ app.post('/api/dev/grant-pro', requireAuth, async (req: AuthenticatedRequest, re
     await setUserEntitlementData(userId, entitlement);
     return res.json({ ok: true, entitlement });
   } catch (err: any) {
-    console.error('[FamPals API] Failed to grant dev pro entitlement:', err?.message || err);
+    console.error('[FamPal API] Failed to grant dev pro entitlement:', err?.message || err);
     return res.status(500).json({ error: 'Failed to grant dev entitlement' });
   }
 });
+
+app.post('/api/gemini/generate', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { model, contents, config } = req.body;
+    if (!model || !contents) return res.status(400).json({ error: 'model and contents are required' });
+    
+    // Default to the original flash model, though typically the client passes the exact model
+    const actualModel = model || 'gemini-1.5-flash';
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    const response = await ai.models.generateContent({ model: actualModel, contents, config });
+    return res.json({ text: response.text, usageMetadata: response.usageMetadata });
+  } catch (err: any) {
+    console.error('[FamPal API] Gemini error:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to generate content' });
+  }
+});
+
+// --- Phase 1 Migration Endpoints ---
+
+app.get('/api/user/:uid', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const data = await loadUserState(req.uid);
+    return res.json({ data });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to load user:', err);
+    return res.status(500).json({ error: 'Failed to load user' });
+  }
+});
+
+app.put('/api/user/:uid', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const profile = isRecord(req.body?.profile) ? req.body.profile : {};
+    await upsertUserProfileData(req.uid, profile);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to update user:', err);
+    return res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.patch('/api/user/:uid/entitlement', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const entitlement = req.body?.entitlement;
+    if (!entitlement) return res.status(400).json({ error: 'entitlement required' });
+    await setUserEntitlementData(req.uid, entitlement);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to update entitlement:', err);
+    return res.status(500).json({ error: 'Failed to update entitlement' });
+  }
+});
+
+app.get('/api/user/:uid/saved-places', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const places = await listSavedPlaces(req.uid);
+    return res.json({ places });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to load saved places:', err);
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.put('/api/user/:uid/saved-places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const placeId = String(req.params.placeId);
+    const { savedPlace, placeSnapshot } = req.body;
+    
+    if (isPostgresEnabled) {
+      await pgQuery(`
+        INSERT INTO saved_places (user_id, place_id, place_name, formatted_address, rating, saved_at, payload, place_raw)
+        VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
+        ON CONFLICT (user_id, place_id) DO UPDATE
+        SET payload = EXCLUDED.payload, place_raw = EXCLUDED.place_raw, saved_at = now()
+      `, [req.uid, placeId, savedPlace?.name || null, savedPlace?.address || null, savedPlace?.rating || null, JSON.stringify(savedPlace || {}), JSON.stringify(placeSnapshot || {})]);
+    } else {
+      await db.collection('users').doc(req.uid).collection('savedPlaces').doc(placeId).set({ ...savedPlace, placeSnapshot, placeId }, { merge: true });
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to save place:', err);
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.delete('/api/user/:uid/saved-places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const placeId = String(req.params.placeId);
+    if (isPostgresEnabled) {
+      await pgQuery(`DELETE FROM saved_places WHERE user_id = $1 AND place_id = $2`, [req.uid, placeId]);
+    } else {
+      await db.collection('users').doc(req.uid).collection('savedPlaces').doc(placeId).delete();
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to delete place:', err);
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.get('/api/places/:placeId/contributions', async (req: Request, res: Response) => {
+  try {
+    const placeId = String(req.params.placeId);
+    if (isPostgresEnabled) {
+      const result = await pgQuery(`SELECT * FROM place_contributions WHERE place_id = $1`, [placeId]);
+      return res.json({ contributions: result.rows });
+    }
+    const types = ['accessibility', 'familyFacilities', 'petFriendly'];
+    let contributions: any[] = [];
+    for (const type of types) {
+      const snap = await db.collection('places').doc(placeId).collection(type).get();
+      snap.forEach(doc => contributions.push({ id: doc.id, type, ...doc.data() }));
+    }
+    return res.json({ contributions });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.post('/api/places/:placeId/contributions', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const placeId = String(req.params.placeId);
+    const { type, features, summary, visitVerified } = req.body;
+    if (isPostgresEnabled) {
+      const dbType = type === 'familyFacilities' ? 'family_facilities' : (type === 'petFriendly' ? 'pet_friendly' : type);
+      await pgQuery(`
+        INSERT INTO place_contributions (place_id, contribution_type, user_id, features, summary, visit_verified)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (place_id, contribution_type, user_id) DO UPDATE
+        SET features = EXCLUDED.features, summary = EXCLUDED.summary, updated_at = now()
+      `, [placeId, dbType, req.uid, JSON.stringify(features || []), summary || null, visitVerified || false]);
+    } else {
+      await db.collection('places').doc(placeId).collection(type).doc(req.uid!).set({ features, summary, visitVerified, updatedAt: new Date().toISOString() }, { merge: true });
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.post('/api/user/:uid/ai-credits/reserve', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const { month } = req.body;
+    const defaultLimit = 10;
+    if (isPostgresEnabled) {
+      const result = await pgQuery(`
+        WITH current AS (
+          SELECT used, monthly_limit, reset_month
+          FROM ai_credits WHERE user_id = $1 FOR UPDATE
+        ),
+        reset_check AS (
+          SELECT
+            CASE WHEN reset_month != $2 THEN 0 ELSE used END as effective_used,
+            monthly_limit,
+            CASE WHEN reset_month != $2 THEN $2 ELSE reset_month END as new_reset_month
+          FROM current
+        )
+        INSERT INTO ai_credits (user_id, used, monthly_limit, reset_month, last_used_at)
+        VALUES ($1, 1, $3, $2, now())
+        ON CONFLICT (user_id) DO UPDATE SET
+          used = CASE WHEN ai_credits.reset_month != $2 THEN 1 ELSE ai_credits.used + 1 END,
+          reset_month = $2,
+          last_used_at = now()
+        RETURNING used, monthly_limit, reset_month
+      `, [req.uid, month, defaultLimit]);
+      
+      const row = result.rows[0];
+      if (row.used > row.monthly_limit) {
+        return res.status(429).json({ ok: false, used: row.used, limit: row.monthly_limit, remaining: 0, reason: 'limit_reached' });
+      }
+      return res.json({ ok: true, used: row.used, limit: row.monthly_limit, remaining: row.monthly_limit - row.used });
+    } else {
+      // Fallback for Firestore
+      return res.json({ ok: true, used: 1, limit: defaultLimit, remaining: defaultLimit - 1 });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.post('/api/user/:uid/ai-credits/refund', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.uid !== req.params.uid) return res.status(403).json({ error: 'forbidden' });
+    const { month } = req.body;
+    if (isPostgresEnabled) {
+      await pgQuery(`
+        UPDATE ai_credits 
+        SET used = GREATEST(0, used - 1)
+        WHERE user_id = $1 AND reset_month = $2
+      `, [req.uid, month]);
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.post('/api/reports', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { placeId, contentType, contentId, reason, details } = req.body;
+    if (isPostgresEnabled) {
+      await pgQuery(`
+        INSERT INTO community_reports (place_id, content_type, content_id, reported_by, reason, details)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, [placeId, contentType, contentId, req.uid, reason, details]);
+    } else {
+      await db.collection('reports').add({
+        placeId, contentType, contentId, reportedBy: req.uid, reason, details, createdAt: new Date().toISOString()
+      });
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed' });
+  }
+});
+
+// --- End Phase 1 Migration Endpoints ---
+
 
 app.post('/api/user/data-deletion', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -4575,14 +4800,14 @@ app.post('/api/user/data-deletion', requireAuth, async (req: AuthenticatedReques
       return res.status(400).json({ error: `Invalid categories: ${invalid.join(', ')}` });
     }
 
-    console.log(`[FamPals API] Data deletion request from user ${userId}:`, {
+    console.log(`[FamPal API] Data deletion request from user ${userId}:`, {
       categories,
       timestamp: new Date().toISOString(),
     });
 
     res.json({ success: true, message: 'Data deletion request received. Selected data will be removed shortly.' });
   } catch (err: any) {
-    console.error('[FamPals API] Data deletion request failed:', err?.message || err);
+    console.error('[FamPal API] Data deletion request failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to process data deletion request' });
   }
 });
@@ -4603,26 +4828,26 @@ if (isProduction) {
 
 // Start server immediately to satisfy Cloud Run health checks
 const server = app.listen(Number(PORT), HOST, () => {
-  console.log(`[FamPals API] Server running on ${HOST}:${PORT}`);
-  console.log(`[FamPals API] listening on ${PORT}`);
-  console.log(`[FamPals API] Environment: ${isProduction ? 'production' : 'development'}`);
-  console.log(`[FamPals API] Paystack configured: ${!!PAYSTACK_SECRET_KEY}`);
+  console.log(`[FamPal API] Server running on ${HOST}:${PORT}`);
+  console.log(`[FamPal API] listening on ${PORT}`);
+  console.log(`[FamPal API] Environment: ${isProduction ? 'production' : 'development'}`);
+  console.log(`[FamPal API] Paystack configured: ${!!PAYSTACK_SECRET_KEY}`);
 });
 
 // Handle server errors
 server.on('error', (err) => {
-  console.error('[FamPals API] Server error:', err);
+  console.error('[FamPal API] Server error:', err);
   process.exit(1);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('[FamPals API] SIGTERM received, shutting down gracefully');
+  console.log('[FamPal API] SIGTERM received, shutting down gracefully');
   server.close(async () => {
     await closePostgresPool().catch((err) => {
-      console.warn('[FamPals API] Failed to close Postgres pool cleanly:', err);
+      console.warn('[FamPal API] Failed to close Postgres pool cleanly:', err);
     });
-    console.log('[FamPals API] Server closed');
+    console.log('[FamPal API] Server closed');
     process.exit(0);
   });
 });

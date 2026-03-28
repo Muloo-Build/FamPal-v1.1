@@ -1,5 +1,5 @@
 {
-  "name": "FamPals - Parent's Local Guide",
+  "name": "FamPal - Parent's Local Guide",
   "description": "An intelligent, curated guide for parents to find kid and pet-friendly restaurants, activities, and places based on their current location and interests.",
   "requestFramePermissions": [
     "geolocation"

@@ -12,14 +12,45 @@ export interface SearchContext {
   searchMode?: 'me' | 'family' | 'partner' | 'circle';
 }
 
-// Always create a fresh instance to ensure correct API key usage
-const getAI = () => new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
+import { auth } from './lib/firebase';
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+
+const getAI = () => {
+  return {
+    models: {
+      generateContent: async (params: { model: string, contents: string, config?: any }) => {
+        const currentUser = auth?.currentUser;
+        let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (currentUser) {
+          const token = await currentUser.getIdToken();
+          headers.Authorization = `Bearer ${token}`;
+        }
+        
+        const response = await fetch(`${API_BASE}/api/gemini/generate`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(params)
+        });
+        
+        if (!response.ok) {
+          throw new Error(await response.text().catch(() => 'request_failed'));
+        }
+        
+        const data = await response.json();
+        return {
+          text: data.text || ''
+        };
+      }
+    }
+  };
+};
 
 const AI_MAX_OUTPUT_TOKENS = Number(import.meta.env.VITE_AI_MAX_OUTPUT_TOKENS || 512);
 const AI_SUMMARY_MAX_OUTPUT_TOKENS = Number(import.meta.env.VITE_AI_SUMMARY_MAX_OUTPUT_TOKENS || 256);
 const AI_TIMEOUT_MS = Number(import.meta.env.VITE_AI_TIMEOUT_MS || 15000);
 const AI_CACHE_TTL_MS = Number(import.meta.env.VITE_AI_CACHE_TTL_MS || 7 * 24 * 60 * 60 * 1000);
-const AI_CACHE_STORAGE_KEY = 'fampals_ai_cache';
+const AI_CACHE_STORAGE_KEY = 'fampal_ai_cache';
 
 // Reliable placeholder images by place type using Unsplash
 const placeholderImages: Record<string, string[]> = {
@@ -106,10 +137,10 @@ async function reserveCreditBeforeGemini(userId?: string): Promise<boolean> {
   if (!userId) return false;
   const result = await reserveSmartInsightCredit();
   if (!result.ok) {
-    if (result.reason === 'rate_limited') {
+    if ('reason' in result && result.reason === 'rate_limited') {
       throw buildRateLimitedError();
     }
-    throw buildLimitReachedError(result.limit);
+    throw buildLimitReachedError('limit' in result ? result.limit : 0);
   }
   return true;
 }
@@ -119,7 +150,7 @@ async function tryRefundCredit(userId?: string): Promise<void> {
   try {
     await refundSmartInsightCredit();
   } catch (refundError) {
-    console.warn('[FamPals] Failed to refund smart insight credit.', refundError);
+    console.warn('[FamPal] Failed to refund smart insight credit.', refundError);
   }
 }
 
@@ -195,7 +226,7 @@ async function logAiUsage(userId: string | undefined, featureName: string, usage
       latency_ms: usage.latencyMs,
     });
   } catch (err) {
-    console.warn('[FamPals] Failed to log AI usage.', err);
+    console.warn('[FamPal] Failed to log AI usage.', err);
   }
 }
 
@@ -226,7 +257,7 @@ export async function fetchNearbyPlaces(
   // Check localStorage cache first (persists across page refreshes)
   const cached = getCachedPlaces(cacheKey);
   if (cached) {
-    console.log('[FamPals] Loaded places from cache');
+    console.log('[FamPal] Loaded places from cache');
     return cached;
   }
   
@@ -329,7 +360,7 @@ export async function fetchNearbyPlaces(
     
     // Cache the results to localStorage (persists across page refreshes)
     setPlacesCache(cacheKey, { places, timestamp: Date.now() });
-    console.log('[FamPals] Cached places for faster loading');
+    console.log('[FamPal] Cached places for faster loading');
     
     return places;
 
@@ -343,7 +374,7 @@ export async function fetchNearbyPlaces(
 const aiResponseCache: Map<string, string> = new Map();
 
 // Persistent localStorage cache for places (survives page refresh)
-const PLACES_CACHE_KEY = 'fampals_places_cache';
+const PLACES_CACHE_KEY = 'fampal_places_cache';
 const PLACES_CACHE_TTL = 30 * 60 * 1000; // 30 minutes for better UX
 
 interface CacheEntry {
@@ -510,9 +541,6 @@ export async function generateFamilySummary(
   childrenAges?: number[],
   options?: { userId?: string; featureName?: string; forceRefresh?: boolean; onUsage?: AiUsageCallback }
 ): Promise<string> {
-  if (!import.meta.env.VITE_GEMINI_API_KEY) {
-    throw new Error("Gemini API key missing – AI disabled");
-  }
   
   const usageMonth = getUsageMonthKey();
   const userIdPart = options?.userId || 'guest';

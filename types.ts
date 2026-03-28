@@ -149,8 +149,7 @@ export const ACTIVITY_OPTIONS = {
 } as const;
 
 export const FOOD_PREFERENCES = [
-  'Vegetarian', 'Vegan', 'Halal', 'Kosher', 'Gluten-free', 
-  'Dairy-free', 'Pescatarian', 'No red meat', 'Organic preferred'
+  'Vegetarian', 'Halal', 'Kosher', 'Gluten-free'
 ] as const;
 
 export const ALLERGY_OPTIONS = [

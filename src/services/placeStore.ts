@@ -456,7 +456,7 @@ export async function getPlacesByGeoBoundsAndCategory(
       })
       .slice(0, normalizedLimit);
   } catch (err: any) {
-    console.warn('[FamPals placeStore] geohash cache query failed, using category fallback', err?.code || err?.message || err);
+    console.warn('[FamPal placeStore] geohash cache query failed, using category fallback', err?.code || err?.message || err);
     const fallbackConstraints: any[] = [firestoreLimit(Math.max(normalizedLimit * 3, 30))];
     if (includeCategory) {
       fallbackConstraints.unshift(where('facets.categories', 'array-contains', category));
@@ -558,7 +558,7 @@ export async function upsertPlaceFromGoogle(
   await setDoc(
     placeRef,
     {
-      ...stripUndefined(placePayload),
+      ...(stripUndefined(placePayload) as object),
       createdAt: existing.exists() ? existing.data().createdAt || serverTimestamp() : serverTimestamp(),
       updatedAt: serverTimestamp(),
       lastRefreshedAt: serverTimestamp(),

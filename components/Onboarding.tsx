@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import type { ExploreIntent, UserPreferences, Preferences, Child, Pet, PetType, PartnerLink, ProfileInfo } from '../types';
-import { FOOD_PREFERENCES, ALLERGY_OPTIONS, ACTIVITY_PREFERENCES, PET_TYPE_OPTIONS, PET_SIZE_OPTIONS } from '../types';
+import type { UserPreferences, Preferences, Child, ProfileInfo } from '../types';
 
 interface OnboardingProps {
   userName?: string | null;
@@ -8,37 +7,13 @@ interface OnboardingProps {
   initialUserPreferences?: UserPreferences;
   initialPreferences?: Preferences;
   initialChildren?: Child[];
-  initialPets?: Pet[];
-  initialPartnerLink?: PartnerLink;
   onComplete: (result: {
     profileInfo?: ProfileInfo | null;
     preferences?: Preferences | null;
     children?: Child[] | null;
-    pets?: Pet[] | null;
-    userPreferences?: UserPreferences | null;
-    partnerLink?: PartnerLink | null;
     skipped: boolean;
   }) => void;
 }
-
-const CATEGORY_OPTIONS: { key: ExploreIntent; label: string; icon: string }[] = [
-  { key: 'all', label: 'All', icon: '?' },
-  { key: 'eat_drink', label: 'Eat and drink', icon: '???' },
-  { key: 'play_kids', label: 'Play and kids', icon: '??' },
-  { key: 'outdoors', label: 'Outdoors', icon: '??' },
-  { key: 'things_to_do', label: 'Things to do', icon: '???' },
-  { key: 'sport_active', label: 'Sport and active', icon: '?' },
-  { key: 'indoor', label: 'Indoor', icon: '???' },
-];
-
-const generateInviteCode = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i += 1) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-};
 
 const getDefaultPreferences = (): Preferences => ({
   foodPreferences: [],
@@ -51,7 +26,21 @@ const STEP_GRADIENTS = [
   'from-purple-400 via-fuchsia-500 to-pink-500',
   'from-emerald-400 via-teal-500 to-cyan-600',
   'from-pink-400 via-rose-500 to-orange-400',
-  'from-violet-500 via-purple-500 to-fuchsia-500',
+];
+
+const CHILD_AGE_GROUPS = [
+  { label: '0–2', min: 0, max: 2 },
+  { label: '3–5', min: 3, max: 5 },
+  { label: '6–9', min: 6, max: 9 },
+  { label: '10–13', min: 10, max: 13 },
+  { label: '14–17', min: 14, max: 17 },
+];
+
+const ACCESSIBILITY_OPTIONS = [
+  { key: 'usesPushchair', label: 'Pram/pushchair' },
+  { key: 'usesWheelchair', label: 'Wheelchair access' },
+  { key: 'needsStepFree', label: 'Step-free paths' },
+  { key: 'prefersPavedPaths', label: 'Quiet spaces' },
 ];
 
 const Onboarding: React.FC<OnboardingProps> = ({
@@ -60,30 +49,20 @@ const Onboarding: React.FC<OnboardingProps> = ({
   initialUserPreferences,
   initialPreferences,
   initialChildren,
-  initialPets,
-  initialPartnerLink,
   onComplete,
 }) => {
   const [step, setStep] = useState(0);
-  const [radiusKm, setRadiusKm] = useState(initialUserPreferences?.lastRadius || 10);
-  const [category, setCategory] = useState<ExploreIntent>(initialUserPreferences?.lastCategory || 'all');
   const [profileName, setProfileName] = useState(initialProfileInfo?.displayName || userName || '');
-  const [profileAge, setProfileAge] = useState(
-    initialProfileInfo?.age ? String(initialProfileInfo.age) : ''
-  );
-  const [preferences, setPreferences] = useState<Preferences>({
-    ...getDefaultPreferences(),
-    ...(initialPreferences || {}),
-  });
   const [children, setChildren] = useState<Child[]>(initialChildren || []);
-  const [childName, setChildName] = useState('');
-  const [childAge, setChildAge] = useState('');
-  const [pets, setPets] = useState<Pet[]>(initialPets || []);
-  const [petName, setPetName] = useState('');
-  const [petType, setPetType] = useState<PetType>('dog');
-  const [partnerLink, setPartnerLink] = useState<PartnerLink | null>(initialPartnerLink || null);
+  const [accessibility, setAccessibility] = useState<Record<string, boolean>>({
+    usesPushchair: false,
+    usesWheelchair: false,
+    needsStepFree: false,
+    prefersPavedPaths: false,
+    ...(initialPreferences?.accessibility?.reduce((acc, key) => ({ ...acc, [key]: true }), {}) || {}),
+  });
 
-  const totalSteps = 4;
+  const totalSteps = 3;
   const isLastStep = step === totalSteps - 1;
 
   const handleSkip = () => {
@@ -104,86 +83,46 @@ const Onboarding: React.FC<OnboardingProps> = ({
     setStep((prev) => Math.max(prev - 1, 0));
   };
 
-  const togglePreference = useCallback((key: keyof Preferences, value: string) => {
-    setPreferences(prev => {
-      const current = prev[key] || [];
-      const exists = current.includes(value);
-      const next = exists ? current.filter((item) => item !== value) : [...current, value];
-      return { ...prev, [key]: next };
-    });
-  }, []);
+  const toggleAccessibility = (key: string) => {
+    setAccessibility(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
 
-  const handleAddChild = () => {
-    if (!childName.trim() || !childAge.trim()) return;
-    const ageNumber = childAge.trim() ? Number(childAge) : NaN;
-    if (!Number.isFinite(ageNumber)) return;
+  const addChildByAgeGroup = (ageGroup: { label: string; min: number; max: number }) => {
+    const midAge = Math.floor((ageGroup.min + ageGroup.max) / 2);
     const newChild: Child = {
       id: Date.now().toString(),
-      name: childName.trim(),
-      age: ageNumber,
+      name: `Child ${children.length + 1}`,
+      age: midAge,
     };
-    setChildren((prev) => [...prev, newChild]);
-    setChildName('');
-    setChildAge('');
+    setChildren(prev => [...prev, newChild]);
   };
 
-  const handleRemoveChild = (id: string) => {
-    setChildren((prev) => prev.filter((child) => child.id !== id));
-  };
-
-  const handleAddPet = () => {
-    if (!petName.trim()) return;
-    const newPet: Pet = {
-      id: Date.now().toString(),
-      name: petName.trim(),
-      type: petType,
-    };
-    setPets((prev) => [...prev, newPet]);
-    setPetName('');
-    setPetType('dog');
-  };
-
-  const handleRemovePet = (id: string) => {
-    setPets((prev) => prev.filter((p) => p.id !== id));
-  };
-
-  const handleGeneratePartnerLink = () => {
-    if (partnerLink?.status === 'accepted') return;
-    const code = partnerLink?.inviteCode || generateInviteCode();
-    setPartnerLink({
-      inviteCode: code,
-      linkedAt: new Date().toISOString(),
-      status: 'pending',
-    });
-  };
-
-  const handleSharePartnerLink = () => {
-    if (!partnerLink?.inviteCode) return;
-    const message = `Join me on FamPals! Use my partner code: ${partnerLink.inviteCode}\n\nDownload the app: ${window.location.origin}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+  const removeChild = (id: string) => {
+    setChildren(prev => prev.filter(c => c.id !== id));
   };
 
   const buildResult = (skipped: boolean) => {
     const trimmedName = profileName.trim();
-    const parsedAge = profileAge.trim() ? Number(profileAge) : NaN;
-    const profileInfo: ProfileInfo | null = trimmedName || Number.isFinite(parsedAge)
-      ? {
-          displayName: trimmedName || undefined,
-          age: Number.isFinite(parsedAge) ? parsedAge : undefined,
-        }
+    const profileInfo: ProfileInfo | null = trimmedName
+      ? { displayName: trimmedName }
       : null;
+
+    const accessibilityKeys = Object.entries(accessibility)
+      .filter(([_, value]) => value)
+      .map(([key, _]) => key);
+
+    const preferences: Preferences = {
+      ...getDefaultPreferences(),
+      accessibility: accessibilityKeys,
+    };
 
     return {
       profileInfo,
       preferences,
       children,
-      pets,
-      userPreferences: {
-        ...(initialUserPreferences || {}),
-        lastRadius: radiusKm,
-        lastCategory: category,
-      },
-      partnerLink: partnerLink?.inviteCode ? partnerLink : null,
       skipped,
     };
   };
@@ -206,46 +145,130 @@ const Onboarding: React.FC<OnboardingProps> = ({
           ))}
         </div>
         <button onClick={handleSkip} className="text-xs font-semibold text-slate-400 active:text-slate-600 px-2 py-1">
-          Skip
+          {step === totalSteps - 1 ? 'Skip' : 'Skip'}
         </button>
       </div>
 
       <div className="flex-1 flex flex-col" key={step}>
-        {step === 0 && <StepWelcome
-          userName={userName}
-          profileName={profileName}
-          setProfileName={setProfileName}
-          profileAge={profileAge}
-          setProfileAge={setProfileAge}
-        />}
-        {step === 1 && <StepExplorer />}
-        {step === 2 && <StepFamily
-          children={children}
-          childName={childName}
-          setChildName={setChildName}
-          childAge={childAge}
-          setChildAge={setChildAge}
-          handleAddChild={handleAddChild}
-          handleRemoveChild={handleRemoveChild}
-          pets={pets}
-          petName={petName}
-          setPetName={setPetName}
-          petType={petType}
-          setPetType={setPetType}
-          handleAddPet={handleAddPet}
-          handleRemovePet={handleRemovePet}
-          partnerLink={partnerLink}
-          handleGeneratePartnerLink={handleGeneratePartnerLink}
-          handleSharePartnerLink={handleSharePartnerLink}
-        />}
-        {step === 3 && <StepPreferences
-          radiusKm={radiusKm}
-          setRadiusKm={setRadiusKm}
-          category={category}
-          setCategory={setCategory}
-          preferences={preferences}
-          togglePreference={togglePreference}
-        />}
+        {step === 0 && (
+          <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-28 h-28 rounded-full bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center mb-6 shadow-xl shadow-purple-200/50">
+                <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+              </div>
+              <h1 className="text-2xl font-black text-slate-900 mb-2">
+                What's your name?
+              </h1>
+              <p className="text-sm text-slate-500 max-w-xs">
+                We'll use this to personalise your experience.
+              </p>
+            </div>
+
+            <div className="flex-1 flex flex-col justify-center gap-4">
+              <input
+                type="text"
+                placeholder="Your name"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                className="w-full px-5 py-4 rounded-2xl border-2 border-slate-200 text-base font-medium placeholder-slate-400 focus:outline-none focus:border-purple-400 focus:bg-purple-50"
+              />
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-28 h-28 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-600 flex items-center justify-center mb-6 shadow-xl shadow-emerald-200/50">
+                <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
+              </div>
+              <h1 className="text-2xl font-black text-slate-900 mb-2">
+                Do you have kids?
+              </h1>
+              <p className="text-sm text-slate-500 max-w-xs">
+                Select their age groups so we can find family-friendly places.
+              </p>
+            </div>
+
+            <div className="flex-1 flex flex-col justify-center gap-4">
+              <div className="grid grid-cols-2 gap-3">
+                {CHILD_AGE_GROUPS.map(group => (
+                  <button
+                    key={group.label}
+                    onClick={() => addChildByAgeGroup(group)}
+                    className="py-4 px-3 rounded-2xl bg-emerald-50 border-2 border-emerald-200 text-emerald-700 font-bold text-sm hover:bg-emerald-100 active:scale-95 transition-all"
+                  >
+                    {group.label}
+                  </button>
+                ))}
+              </div>
+
+              {children.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Children added</p>
+                  <div className="space-y-2">
+                    {children.map(child => (
+                      <div key={child.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-2">
+                        <span className="text-sm font-semibold text-slate-700">{child.age} years</span>
+                        <button
+                          onClick={() => removeChild(child.id)}
+                          className="text-rose-500 hover:text-rose-600 font-bold text-lg"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-28 h-28 rounded-full bg-gradient-to-br from-pink-400 to-orange-400 flex items-center justify-center mb-6 shadow-xl shadow-pink-200/50">
+                <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18.364 5.636l-3.536 3.536m9.172-9.172a2 2 0 11-2.828 2.828l-3.536-3.536m0 9.172l9.172-9.172M9.172 9.172L5.636 5.636m3.536 9.172l-3.536 3.536M5.636 5.636a2 2 0 110 2.828l3.536 3.536" /></svg>
+              </div>
+              <h1 className="text-2xl font-black text-slate-900 mb-2">
+                Accessibility needs
+              </h1>
+              <p className="text-sm text-slate-500 max-w-xs">
+                Help us find places that work for your family.
+              </p>
+            </div>
+
+            <div className="flex-1 flex flex-col justify-center gap-4">
+              <div className="space-y-2">
+                {ACCESSIBILITY_OPTIONS.map(option => (
+                  <button
+                    key={option.key}
+                    onClick={() => toggleAccessibility(option.key)}
+                    className={`w-full py-3 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95 ${
+                      accessibility[option.key]
+                        ? 'bg-pink-500 text-white'
+                        : 'bg-slate-100 text-slate-700 border-2 border-slate-200'
+                    }`}
+                  >
+                    {accessibility[option.key] ? '✓ ' : ''}{option.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() => toggleAccessibility('none')}
+                className={`w-full py-3 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95 ${
+                  Object.values(accessibility).every(v => !v)
+                    ? 'bg-slate-500 text-white'
+                    : 'bg-slate-100 text-slate-700 border-2 border-dashed border-slate-300'
+                }`}
+              >
+                None of these
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="px-6 pb-8 pt-4">
@@ -264,490 +287,12 @@ const Onboarding: React.FC<OnboardingProps> = ({
             onClick={handleNext}
             className={`flex-1 h-14 rounded-2xl text-sm font-bold text-white active:scale-[0.98] transition-all shadow-lg bg-gradient-to-r ${STEP_GRADIENTS[step]}`}
           >
-            {isLastStep ? "Let's Go!" : 'Continue'}
+            {isLastStep ? 'Get Started' : 'Next'}
           </button>
         </div>
       </div>
     </div>
   );
 };
-
-const StepWelcome: React.FC<{
-  userName?: string | null;
-  profileName: string;
-  setProfileName: (v: string) => void;
-  profileAge: string;
-  setProfileAge: (v: string) => void;
-}> = ({ userName, profileName, setProfileName, profileAge, setProfileAge }) => (
-  <div className="flex-1 flex flex-col px-6 pt-4 pb-2">
-    <div className="flex flex-col items-center text-center mb-8">
-      <div className="w-28 h-28 rounded-full bg-gradient-to-br from-sky-400 to-indigo-600 flex items-center justify-center mb-6 shadow-xl shadow-sky-200/50">
-        <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-      </div>
-      <h1 className="text-3xl font-black text-slate-900 mb-2">
-        Welcome{userName ? `, ${userName.split(' ')[0]}` : ''}!
-      </h1>
-      <p className="text-base text-slate-500 max-w-xs leading-relaxed">
-        Let's set up your family profile so we can find the best activities near you.
-      </p>
-    </div>
-
-    <div className="space-y-4 flex-1">
-      <div>
-        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">What should we call you?</label>
-        <input
-          value={profileName}
-          onChange={(e) => setProfileName(e.target.value)}
-          placeholder="Your name"
-          className="w-full h-14 rounded-2xl bg-slate-50 border-2 border-slate-100 px-5 text-base font-semibold text-slate-700 outline-none focus:border-sky-300 focus:bg-white transition-all"
-        />
-      </div>
-      <div>
-        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Your age (optional)</label>
-        <input
-          type="number"
-          min="0"
-          value={profileAge}
-          onChange={(e) => setProfileAge(e.target.value)}
-          placeholder="e.g. 34"
-          className="w-full h-14 rounded-2xl bg-slate-50 border-2 border-slate-100 px-5 text-base font-semibold text-slate-700 outline-none focus:border-sky-300 focus:bg-white transition-all"
-        />
-      </div>
-    </div>
-  </div>
-);
-
-const FeatureCard: React.FC<{ icon: React.ReactNode; title: string; description: string; gradient: string; delay: number }> = ({
-  icon, title, description, gradient, delay,
-}) => (
-  <div
-    className="flex items-start gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm"
-    style={{ animationDelay: `${delay}ms` }}
-  >
-    <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center flex-shrink-0 shadow-md text-white`}>
-      {icon}
-    </div>
-    <div className="flex-1 min-w-0">
-      <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{description}</p>
-    </div>
-  </div>
-);
-
-const StepExplorer: React.FC = () => {
-  const [notifStatus, setNotifStatus] = React.useState<'default' | 'granted' | 'denied'>(
-    typeof Notification !== 'undefined' ? Notification.permission : 'default'
-  );
-
-  const handleEnableNotifications = async () => {
-    if (typeof Notification === 'undefined') return;
-    try {
-      const result = await Notification.requestPermission();
-      setNotifStatus(result);
-    } catch {
-      setNotifStatus('denied');
-    }
-  };
-
-  return (
-    <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
-      <div className="flex flex-col items-center text-center mb-5">
-        <div className="w-28 h-28 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-600 flex items-center justify-center mb-5 shadow-xl shadow-emerald-200/50">
-          <span className="text-5xl">🌟</span>
-        </div>
-        <h1 className="text-2xl font-black text-slate-900 mb-2">
-          You're an Explorer
-        </h1>
-        <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
-          Your family knows the best spots. Share what you know and help other families discover amazing places.
-        </p>
-      </div>
-
-      <div className="space-y-3 flex-1">
-        <div className="bg-gradient-to-br from-sky-50 to-emerald-50 rounded-2xl p-4 border border-sky-100">
-          <h3 className="text-sm font-black text-slate-800 mb-1">Earn Points for Every Contribution</h3>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Visited a great cafe? Found a hidden playground? Share it! Every time you mark a place, leave a review, or report family facilities, you earn explorer points and level up.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
-            <span className="text-xl">📍</span>
-            <p className="text-[10px] font-bold text-slate-600 mt-1">Visit & Track</p>
-            <p className="text-[10px] text-sky-600 font-black">+5 pts</p>
-          </div>
-          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
-            <span className="text-xl">📝</span>
-            <p className="text-[10px] font-bold text-slate-600 mt-1">Share Reviews</p>
-            <p className="text-[10px] text-sky-600 font-black">+15 pts</p>
-          </div>
-          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
-            <span className="text-xl">📸</span>
-            <p className="text-[10px] font-bold text-slate-600 mt-1">Save Memories</p>
-            <p className="text-[10px] text-sky-600 font-black">+5 pts</p>
-          </div>
-        </div>
-
-        <FeatureCard
-          icon={<span className="text-lg">🔥</span>}
-          title="Keep Your Streak Going"
-          description="Contribute every week to build a streak. The longer you go, the more you grow as an explorer!"
-          gradient="from-amber-400 to-orange-500"
-          delay={0}
-        />
-
-        <FeatureCard
-          icon={<span className="text-lg">👨‍👩‍👧‍👦</span>}
-          title="Help Families Like Yours"
-          description="Is the place wheelchair-friendly? Do they have a kids' menu? Your insights make a real difference for other parents."
-          gradient="from-violet-400 to-purple-500"
-          delay={100}
-        />
-
-        {notifStatus === 'default' && typeof Notification !== 'undefined' && (
-          <button
-            onClick={handleEnableNotifications}
-            className="w-full flex items-center gap-3 p-4 rounded-2xl bg-white border-2 border-dashed border-sky-200 active:scale-[0.98] transition-all"
-          >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center flex-shrink-0 shadow-md">
-              <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" /></svg>
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-bold text-slate-800">Enable Reminders</p>
-              <p className="text-xs text-slate-500">We'll nudge you once a month to share your latest adventures</p>
-            </div>
-          </button>
-        )}
-
-        {notifStatus === 'granted' && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-100">
-            <svg className="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-            <p className="text-xs font-semibold text-emerald-700">Reminders enabled! We'll check in once a month.</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const StepFamily: React.FC<{
-  children: Child[];
-  childName: string;
-  setChildName: (v: string) => void;
-  childAge: string;
-  setChildAge: (v: string) => void;
-  handleAddChild: () => void;
-  handleRemoveChild: (id: string) => void;
-  pets: Pet[];
-  petName: string;
-  setPetName: (v: string) => void;
-  petType: PetType;
-  setPetType: (v: PetType) => void;
-  handleAddPet: () => void;
-  handleRemovePet: (id: string) => void;
-  partnerLink: PartnerLink | null;
-  handleGeneratePartnerLink: () => void;
-  handleSharePartnerLink: () => void;
-}> = ({
-  children, childName, setChildName, childAge, setChildAge,
-  handleAddChild, handleRemoveChild,
-  pets, petName, setPetName, petType, setPetType,
-  handleAddPet, handleRemovePet,
-  partnerLink, handleGeneratePartnerLink, handleSharePartnerLink,
-}) => (
-  <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
-    <div className="flex flex-col items-center text-center mb-6">
-      <div className="w-28 h-28 rounded-full bg-gradient-to-br from-pink-400 to-red-500 flex items-center justify-center mb-6 shadow-xl shadow-pink-200/50">
-        <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
-      </div>
-      <h1 className="text-2xl font-black text-slate-900 mb-2">
-        Your Family
-      </h1>
-      <p className="text-sm text-slate-500 max-w-xs">
-        Add your kids and pets so we can find the perfect spots for everyone.
-      </p>
-    </div>
-
-    <div className="space-y-4 flex-1">
-      <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-700">Kids</h3>
-          <span className="text-xs font-semibold text-slate-400 bg-white px-3 py-1 rounded-full">{children.length} added</span>
-        </div>
-
-        {children.length > 0 && (
-          <div className="space-y-2">
-            {children.map(child => (
-              <div key={child.id} className="flex items-center justify-between bg-white rounded-2xl px-4 py-3 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-pink-300 to-rose-400 flex items-center justify-center text-white text-sm font-bold">
-                    {child.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-700">{child.name}</p>
-                    <p className="text-[11px] text-slate-400">{child.age} {child.age === 1 ? 'year' : 'years'} old</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleRemoveChild(child.id)}
-                  className="w-8 h-8 rounded-full bg-rose-50 flex items-center justify-center active:scale-90 transition-all"
-                >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="text-rose-400">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <input
-            value={childName}
-            onChange={(e) => setChildName(e.target.value)}
-            placeholder="Name"
-            className="flex-1 h-12 rounded-2xl bg-white border-2 border-slate-100 px-4 text-sm font-semibold text-slate-700 outline-none focus:border-pink-300 transition-all"
-          />
-          <input
-            value={childAge}
-            onChange={(e) => setChildAge(e.target.value)}
-            placeholder="Age"
-            type="number"
-            min="0"
-            className="w-20 h-12 rounded-2xl bg-white border-2 border-slate-100 px-3 text-sm font-semibold text-slate-700 outline-none focus:border-pink-300 transition-all text-center"
-          />
-          <button
-            onClick={handleAddChild}
-            className="h-12 w-12 rounded-2xl bg-gradient-to-br from-pink-400 to-rose-500 text-white flex items-center justify-center shadow-md active:scale-90 transition-all flex-shrink-0"
-          >
-            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-700">Pets</h3>
-          <span className="text-xs font-semibold text-slate-400 bg-white px-3 py-1 rounded-full">{pets.length} added</span>
-        </div>
-
-        {pets.length > 0 && (
-          <div className="space-y-2">
-            {pets.map(pet => {
-              const typeOption = PET_TYPE_OPTIONS.find(o => o.value === pet.type);
-              return (
-                <div key={pet.id} className="flex items-center justify-between bg-white rounded-2xl px-4 py-3 shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-300 to-orange-400 flex items-center justify-center text-lg">
-                      {typeOption?.icon || '🐾'}
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-700">{pet.name}</p>
-                      <p className="text-[11px] text-slate-400">{typeOption?.label || pet.type}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRemovePet(pet.id)}
-                    className="w-8 h-8 rounded-full bg-rose-50 flex items-center justify-center active:scale-90 transition-all"
-                  >
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="text-rose-400">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <input
-            value={petName}
-            onChange={(e) => setPetName(e.target.value)}
-            placeholder="Pet name"
-            className="flex-1 h-12 rounded-2xl bg-white border-2 border-slate-100 px-4 text-sm font-semibold text-slate-700 outline-none focus:border-amber-300 transition-all"
-          />
-          <select
-            value={petType}
-            onChange={(e) => setPetType(e.target.value as PetType)}
-            className="w-24 h-12 rounded-2xl bg-white border-2 border-slate-100 px-2 text-sm font-semibold text-slate-700 outline-none focus:border-amber-300 transition-all text-center appearance-none"
-          >
-            {PET_TYPE_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
-            ))}
-          </select>
-          <button
-            onClick={handleAddPet}
-            className="h-12 w-12 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-md active:scale-90 transition-all flex-shrink-0"
-          >
-            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-700">Partner Link</h3>
-            <p className="text-[11px] text-slate-400">Share favourites and plan together</p>
-          </div>
-        </div>
-
-        {partnerLink?.status === 'accepted' ? (
-          <div className="bg-green-50 rounded-2xl p-4 text-center">
-            <p className="text-sm font-semibold text-green-700">Partner linked</p>
-          </div>
-        ) : partnerLink?.inviteCode ? (
-          <div className="space-y-3">
-            <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Your invite code</p>
-              <div className="text-2xl font-black text-violet-600 tracking-[0.3em]">{partnerLink.inviteCode}</div>
-            </div>
-            <button
-              onClick={handleSharePartnerLink}
-              className="w-full h-12 bg-gradient-to-r from-green-400 to-emerald-500 text-white rounded-2xl text-xs font-bold uppercase tracking-wider shadow-md active:scale-[0.98] transition-all"
-            >
-              Share via WhatsApp
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleGeneratePartnerLink}
-            className="w-full h-12 bg-white border-2 border-dashed border-violet-200 text-violet-500 rounded-2xl text-xs font-bold uppercase tracking-wider active:scale-[0.98] transition-all"
-          >
-            Generate Invite Code
-          </button>
-        )}
-        <p className="text-[10px] text-slate-400 text-center">You can always do this later in your Profile</p>
-      </div>
-    </div>
-  </div>
-);
-
-const StepPreferences: React.FC<{
-  radiusKm: number;
-  setRadiusKm: (v: number) => void;
-  category: ExploreIntent;
-  setCategory: (v: ExploreIntent) => void;
-  preferences: Preferences;
-  togglePreference: (key: keyof Preferences, value: string) => void;
-}> = ({ radiusKm, setRadiusKm, category, setCategory, preferences, togglePreference }) => (
-  <div className="flex-1 flex flex-col px-6 pt-4 pb-2 overflow-y-auto">
-    <div className="flex flex-col items-center text-center mb-6">
-      <div className="w-28 h-28 rounded-full bg-gradient-to-br from-violet-400 to-indigo-600 flex items-center justify-center mb-6 shadow-xl shadow-violet-200/50">
-        <svg className="w-12 h-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" /></svg>
-      </div>
-      <h1 className="text-2xl font-black text-slate-900 mb-2">
-        Your Preferences
-      </h1>
-      <p className="text-sm text-slate-500 max-w-xs">
-        Help us personalise your experience. You can change these anytime.
-      </p>
-    </div>
-
-    <div className="space-y-5 flex-1">
-      <div className="bg-slate-50 rounded-3xl p-5 space-y-4">
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Search Radius</label>
-            <span className="text-sm font-black text-violet-600 bg-violet-50 px-3 py-1 rounded-full">{radiusKm} km</span>
-          </div>
-          <input
-            type="range"
-            min="1"
-            max="200"
-            value={radiusKm}
-            onChange={(e) => setRadiusKm(parseInt(e.target.value, 10))}
-            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-violet-500"
-          />
-          <div className="flex justify-between mt-1">
-            <span className="text-[10px] text-slate-400">1 km</span>
-            <span className="text-[10px] text-slate-400">200 km</span>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 block">Default Category</label>
-          <div className="grid grid-cols-4 gap-2">
-            {CATEGORY_OPTIONS.map(option => (
-              <button
-                key={option.key}
-                onClick={() => setCategory(option.key)}
-                className={`flex flex-col items-center gap-1 py-3 rounded-2xl text-[10px] font-bold transition-all active:scale-95 ${
-                  category === option.key
-                    ? 'bg-gradient-to-br from-violet-400 to-indigo-500 text-white shadow-md'
-                    : 'bg-white text-slate-500 border border-slate-100'
-                }`}
-              >
-                <span className="text-lg">{option.icon}</span>
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-slate-50 rounded-3xl p-5 space-y-5">
-        <PreferenceSection
-          title="Eating Habits"
-          options={FOOD_PREFERENCES}
-          selected={preferences.foodPreferences}
-          onToggle={(v) => togglePreference('foodPreferences', v)}
-          activeColor="bg-emerald-500"
-        />
-        <PreferenceSection
-          title="Allergies"
-          options={ALLERGY_OPTIONS}
-          selected={preferences.allergies}
-          onToggle={(v) => togglePreference('allergies', v)}
-          activeColor="bg-rose-500"
-        />
-        <PreferenceSection
-          title="Activities You Love"
-          options={ACTIVITY_PREFERENCES}
-          selected={preferences.activityPreferences}
-          onToggle={(v) => togglePreference('activityPreferences', v)}
-          activeColor="bg-violet-500"
-        />
-      </div>
-    </div>
-  </div>
-);
-
-const PreferenceSection: React.FC<{
-  title: string;
-  options: readonly string[];
-  selected: string[];
-  onToggle: (value: string) => void;
-  activeColor: string;
-}> = ({ title, options, selected, onToggle, activeColor }) => (
-  <div>
-    <label className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 block">{title}</label>
-    <div className="flex flex-wrap gap-2">
-      {options.map(opt => (
-        <button
-          key={opt}
-          onClick={() => onToggle(opt)}
-          className={`px-3.5 py-2 rounded-full text-[11px] font-bold transition-all active:scale-95 ${
-            selected.includes(opt)
-              ? `${activeColor} text-white shadow-sm`
-              : 'bg-white text-slate-500 border border-slate-100'
-          }`}
-        >
-          {opt}
-        </button>
-      ))}
-    </div>
-  </div>
-);
 
 export default Onboarding;
-

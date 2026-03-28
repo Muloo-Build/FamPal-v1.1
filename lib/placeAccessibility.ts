@@ -1,12 +1,4 @@
-import {
-  db,
-  collection,
-  doc,
-  getDoc,
-  addDoc,
-  setDoc,
-  serverTimestamp,
-} from './firebase';
+import { auth } from './firebase';
 import type { Place, UserAccessibilityNeeds, AccessibilityFeatureValue } from '../types';
 import { generateAccessibilitySummary, normalizeAccessibility } from '../src/utils/accessibility';
 import type { AccessibilityFeature } from '../src/types/place';
@@ -32,24 +24,52 @@ const CONFLICT_FEATURES: Partial<Record<keyof UserAccessibilityNeeds, Accessibil
   usesPushchair: ['steep_slopes', 'gravel_or_sand'],
 };
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const currentUser = auth?.currentUser;
+  let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentUser) {
+    const token = await currentUser.getIdToken();
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...headers, ...(init?.headers || {}) },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text().catch(() => 'request_failed'));
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
 export async function loadPlaceAccessibilityByIds(placeIds: string[]): Promise<{
   accessibilityById: Record<string, AccessibilityFeatureValue[]>;
   summaryById: Record<string, string>;
 }> {
-  if (!db || placeIds.length === 0) return { accessibilityById: {}, summaryById: {} };
+  if (placeIds.length === 0) return { accessibilityById: {}, summaryById: {} };
   const uniqueIds = [...new Set(placeIds.filter(Boolean))];
-  const snaps = await Promise.all(uniqueIds.map((placeId) => getDoc(doc(db, 'places', placeId))));
+  
   const accessibilityById: Record<string, AccessibilityFeatureValue[]> = {};
   const summaryById: Record<string, string> = {};
-  snaps.forEach((snap) => {
-    if (!snap.exists()) return;
-    const data = snap.data() as { accessibility?: AccessibilityFeatureValue[]; accessibilitySummary?: string };
-    const accessibility = Array.isArray(data.accessibility) ? data.accessibility : [];
-    accessibilityById[snap.id] = accessibility;
-    summaryById[snap.id] = typeof data.accessibilitySummary === 'string'
-      ? data.accessibilitySummary
-      : generateAccessibilitySummary(accessibility);
-  });
+  
+  await Promise.all(
+    uniqueIds.map(async (placeId) => {
+      try {
+        const data = await apiRequest<{ contributions: any[] }>(`/api/places/${placeId}/contributions?type=accessibility`);
+        const item = data.contributions[0]; // Assuming one aggregated record or we just take the first
+        const accessibility = Array.isArray(item?.features) ? item.features : [];
+        accessibilityById[placeId] = accessibility;
+        summaryById[placeId] = item?.summary || generateAccessibilitySummary(accessibility);
+      } catch (err) {
+        console.warn('Failed to load accessibility via API', placeId, err);
+        accessibilityById[placeId] = [];
+        summaryById[placeId] = '';
+      }
+    })
+  );
+  
   return { accessibilityById, summaryById };
 }
 
@@ -62,42 +82,29 @@ interface SubmitAccessibilityReportInput {
 }
 
 export async function submitAccessibilityReport(input: SubmitAccessibilityReportInput): Promise<{ accessibility: AccessibilityFeatureValue[]; accessibilitySummary: string }> {
-  if (!db) throw new Error('Firestore not initialized');
+  try {
+    const payload = {
+      type: 'accessibility',
+      features: input.features,
+      summary: input.comment || '',
+    };
+    await apiRequest(`/api/places/${input.placeId}/contributions`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    
+    // We just return normalized assuming the API saved it.
+    const normalized = input.features;
+    const summary = generateAccessibilitySummary(normalized);
 
-  const placeRef = doc(db, 'places', input.placeId);
-  const currentPlace = await getDoc(placeRef);
-  const currentData = currentPlace.exists() ? (currentPlace.data() as { accessibility?: AccessibilityFeatureValue[] }) : {};
+    import('./placeCache').then(m => m.markPlaceAsCommunityEnriched(input.placeId)).catch(() => {});
+    import('../src/services/gamification').then(m => { m.awardPoints('accessibility_report'); m.invalidateGamificationCache(); }).catch(() => {});
 
-  await addDoc(collection(db, 'places', input.placeId, 'accessibilityReports'), {
-    userId: input.userId,
-    userDisplayName: input.userDisplayName || null,
-    selections: input.features
-      .filter((item) => item.value === true)
-      .map((item) => ({
-        feature: item.feature,
-        value: true,
-        confidence: 'reported',
-      })),
-    comment: input.comment || null,
-    createdAt: serverTimestamp(),
-  });
-
-  const normalized = normalizeAccessibility(currentData.accessibility || [], input.features);
-  const summary = generateAccessibilitySummary(normalized);
-
-  await setDoc(placeRef, {
-    accessibility: normalized,
-    accessibilitySummary: summary,
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
-
-  import('./placeCache').then(m => m.markPlaceAsCommunityEnriched(input.placeId)).catch(() => {});
-  import('../src/services/gamification').then(m => { m.awardPoints('accessibility_report'); m.invalidateGamificationCache(); }).catch(() => {});
-
-  return {
-    accessibility: normalized,
-    accessibilitySummary: summary,
-  };
+    return { accessibility: normalized, accessibilitySummary: summary };
+  } catch (err) {
+    console.error('Submit report failed', err);
+    throw err;
+  }
 }
 
 function placeFeatureValue(accessibility: AccessibilityFeatureValue[] = [], feature: AccessibilityFeature): boolean | 'unknown' {

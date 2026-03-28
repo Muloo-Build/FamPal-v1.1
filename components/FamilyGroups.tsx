@@ -13,9 +13,9 @@ const FamilyGroups: React.FC<FamilyGroupsProps> = ({ groups, onAddGroup }) => {
   const [type, setType] = useState('Family');
 
   const handleShare = async (group: FamilyGroup) => {
-    const text = `Join my FamPals group "${group.name}"! Use code: ${group.inviteCode}`;
+    const text = `Join my FamPal group "${group.name}"! Use code: ${group.inviteCode}`;
     if (navigator.share) {
-      await navigator.share({ title: 'Join FamPals', text, url: window.location.origin });
+      await navigator.share({ title: 'Join FamPal', text, url: window.location.origin });
     } else {
       const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
       window.open(waUrl, '_blank');

@@ -77,7 +77,7 @@ if (resolvedStorageBucket) {
   firebaseConfig.storageBucket = resolvedStorageBucket;
 }
 
-console.log('[FamPals] Firebase config check:', {
+console.log('[FamPal] Firebase config check:', {
   hasApiKey: !!firebaseConfig.apiKey,
   hasAuthDomain: !!firebaseConfig.authDomain,
   hasProjectId: !!firebaseConfig.projectId,

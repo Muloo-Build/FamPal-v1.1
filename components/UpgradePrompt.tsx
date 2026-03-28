@@ -14,12 +14,12 @@ export function UpgradePrompt({ feature, currentLimit, onUpgrade, compact = fals
 
   if (compact) {
     return (
-      <div className="bg-gradient-to-r from-purple-50 to-fuchsia-50 dark:from-purple-900/20 dark:to-fuchsia-900/20 rounded-xl p-3 border border-purple-100 dark:border-purple-800">
-        <p className="text-xs text-purple-700 dark:text-purple-300">
+      <div className="bg-gradient-to-r from-purple-50 to-fuchsia-50 rounded-xl p-3 border border-purple-100">
+        <p className="text-xs text-purple-700">
           You've reached the free limit of {currentLimit} {feature}.{' '}
           <button 
             onClick={handleUpgrade}
-            className="font-semibold text-purple-800 dark:text-purple-200 underline"
+            className="font-semibold text-purple-800 underline"
           >
             Upgrade on Google Play
           </button>
@@ -29,16 +29,16 @@ export function UpgradePrompt({ feature, currentLimit, onUpgrade, compact = fals
   }
 
   return (
-    <div className="bg-gradient-to-br from-purple-50 via-fuchsia-50 to-pink-50 dark:from-purple-900/20 dark:via-fuchsia-900/20 dark:to-pink-900/20 rounded-2xl p-5 border border-purple-100 dark:border-purple-800 shadow-sm">
+    <div className="bg-gradient-to-br from-purple-50 via-fuchsia-50 to-pink-50 rounded-2xl p-5 border border-purple-100 shadow-sm">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/50 rounded-xl flex items-center justify-center shrink-0 text-purple-500">
+        <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center shrink-0 text-purple-500">
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-purple-800 dark:text-purple-200 text-sm">
+          <p className="font-semibold text-purple-800 text-sm">
             Free limit reached
           </p>
-          <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
+          <p className="text-xs text-purple-600 mt-1">
             You've used all {currentLimit} free {feature}. Upgrade to Pro for unlimited access.
           </p>
           <button 
@@ -103,7 +103,7 @@ export function AILimitBadge({ remaining, limit }: AILimitBadgeProps) {
   
   if (isUnlimited) {
     return (
-      <span className="text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-full font-medium">
+      <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full font-medium">
         Unlimited smart insights
       </span>
     );
@@ -114,8 +114,8 @@ export function AILimitBadge({ remaining, limit }: AILimitBadgeProps) {
   return (
     <span className={`text-xs px-2 py-1 rounded-full font-medium ${
       isLow 
-        ? 'text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-900/30' 
-        : 'text-purple-700 bg-purple-50 dark:text-purple-300 dark:bg-purple-900/30'
+        ? 'text-amber-700 bg-amber-50' 
+        : 'text-purple-700 bg-purple-50'
     }`}>
       {remaining} {remaining === 1 ? 'insight' : 'insights'} left this month
     </span>

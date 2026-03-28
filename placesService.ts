@@ -13,8 +13,8 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const resolveApiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
 const DENY_TYPES_ENV = import.meta.env.VITE_PLACES_DENY_TYPES || '';
 const DENY_BRANDS_ENV = import.meta.env.VITE_PLACES_DENY_BRANDS || '';
-const DENY_TYPES_STORAGE_KEY = 'fampals_places_deny_types';
-const DENY_BRANDS_STORAGE_KEY = 'fampals_places_deny_brands';
+const DENY_TYPES_STORAGE_KEY = 'fampal_places_deny_types';
+const DENY_BRANDS_STORAGE_KEY = 'fampal_places_deny_brands';
 const DEFAULT_DENY_TYPES = [
   'gas_station',
   'convenience_store',
@@ -91,12 +91,12 @@ const DEFAULT_DENY_BRANDS = [
 ];
 
 if (!API_BASE) {
-  console.error('[FamPals] CRITICAL: API base URL is missing! Places search requires server-side proxy.');
+  console.error('[FamPal] CRITICAL: API base URL is missing! Places search requires server-side proxy.');
 }
 
-const PLACES_CACHE_KEY = 'fampals_google_places_cache';
-const DETAILS_CACHE_KEY = 'fampals_place_details_cache';
-const INTENT_CACHE_KEY = 'fampals_intent_places_cache';
+const PLACES_CACHE_KEY = 'fampal_google_places_cache';
+const DETAILS_CACHE_KEY = 'fampal_place_details_cache';
+const INTENT_CACHE_KEY = 'fampal_intent_places_cache';
 const CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 const INTENT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 const SHOULD_LOG_INTENT = import.meta.env.DEV;
@@ -850,7 +850,7 @@ async function enrichPlacesForStrictKidPrefs(
     upgradedCount += 1;
     return place;
   });
-  intentLog(`[FamPals] strict kidPrefs enrichment complete: scanned=${batch.length}, upgraded=${upgradedCount}`);
+  intentLog(`[FamPal] strict kidPrefs enrichment complete: scanned=${batch.length}, upgraded=${upgradedCount}`);
 
   return candidates;
 }
@@ -1007,7 +1007,7 @@ function mapLegacyPlaceToPlace(
       ingestionSource: 'legacyPlacesApi',
     }).catch((err) => {
       if (import.meta.env.DEV) {
-        console.warn('[FamPals] Legacy place cache upsert failed', err);
+        console.warn('[FamPal] Legacy place cache upsert failed', err);
       }
     });
   }
@@ -1050,7 +1050,7 @@ async function fetchLegacyPlaces(
     }
     if (!response.ok) {
       const errText = await response.text();
-      console.warn('[FamPals] Places backend error:', errText);
+      console.warn('[FamPal] Places backend error:', errText);
       return { places: [], nextPageToken: null, hasMore: false, error: errText || `HTTP ${response.status}` };
     }
     const data = await response.json();
@@ -1067,7 +1067,7 @@ async function fetchLegacyPlaces(
     const hasMore = typeof data.hasMore === 'boolean' ? data.hasMore : !!nextPageToken;
     return { places, nextPageToken, hasMore };
   } catch (error) {
-    console.warn('[FamPals] Places backend fetch failed:', error);
+    console.warn('[FamPal] Places backend fetch failed:', error);
     return { places: [], nextPageToken: null, hasMore: false, error: 'fetch_failed' };
   }
 }
@@ -1210,7 +1210,7 @@ export async function searchExploreIntent(
     options?.searchKey ||
     `intent:${intent}:${lat.toFixed(3)}:${lng.toFixed(3)}:${radiusKm}:${options?.cacheContext || ''}:${filtersSignature}`;
   const searchKey = `${baseSearchKey}|q:${qKey}`;
-  intentLog('[FamPals] Explore search cache key', { query: searchQuery, qKey, searchKey });
+  intentLog('[FamPal] Explore search cache key', { query: searchQuery, qKey, searchKey });
   const runWithLimit = createRequestLimiter(3);
   const debug: IntentSearchDebug = {
     intent,
@@ -1267,13 +1267,13 @@ export async function searchExploreIntent(
     .some((place) => !facetSnapshotFromPlace(place, requestedCategory).kidFriendlySignals.includes('play_area_jungle_gym'));
   let cacheFacetRanked = rankAndFilterByComputedFacets(cacheIntentFiltered, requestedCategory, options?.exploreFilters);
   if (requiresStrictKidPlay && (cacheFacetRanked.afterFilterCount === 0 || cacheHasMissingKidSignal)) {
-    intentLog('[FamPals] strict kidPrefs enrichment running on cache candidates', {
+    intentLog('[FamPal] strict kidPrefs enrichment running on cache candidates', {
       reason: cacheFacetRanked.afterFilterCount === 0 ? 'zero_after_strict' : 'missing_play_area_signal',
       candidates: cacheIntentFiltered.length,
     });
     await enrichPlacesForStrictKidPrefs(cacheIntentFiltered, selectedKidPrefs, requestedCategory);
     cacheFacetRanked = rankAndFilterByComputedFacets(cacheIntentFiltered, requestedCategory, options?.exploreFilters);
-    intentLog('[FamPals] strict kidPrefs enrichment cache rerank', {
+    intentLog('[FamPal] strict kidPrefs enrichment cache rerank', {
       afterFilterCount: cacheFacetRanked.afterFilterCount,
     });
   }
@@ -1291,7 +1291,7 @@ export async function searchExploreIntent(
   };
 
   if (PIPELINE_LOGS_ENABLED) {
-    console.log('[FamPals Pipeline] cache stage', {
+    console.log('[FamPal Pipeline] cache stage', {
       cacheCount: debug.pipeline.cacheCount,
       afterFilterCount: debug.pipeline.afterFilterCount,
       hardFiltersApplied: debug.pipeline.hardFiltersApplied,
@@ -1310,8 +1310,8 @@ export async function searchExploreIntent(
     });
   }
 
-  intentLog(`[FamPals] Explore intent selected: ${intent}`);
-  intentLog(`[FamPals] Intent queries executed: baseline=${baselineQueries.join(', ')} boosters=${boosterQueries.join(', ')}`);
+  intentLog(`[FamPal] Explore intent selected: ${intent}`);
+  intentLog(`[FamPal] Intent queries executed: baseline=${baselineQueries.join(', ')} boosters=${boosterQueries.join(', ')}`);
 
   const applyMerge = (query: string, page: number, response: PlacesSearchResponse) => {
     const state = queryState.get(query);
@@ -1350,8 +1350,8 @@ export async function searchExploreIntent(
       hardFilteredOut: facetRanked.hardFilteredOut,
       googleLow: facetRanked.afterFilterCount < PIPELINE_MIN_RESULTS,
     };
-    intentLog(`[FamPals] Query "${query}" page ${page}: ${response.places.length} results, uniqueAdded=${uniqueAdded}, hasMore: ${response.hasMore}`);
-    intentLog(`[FamPals] Merge count after "${query}" page ${page}: ${merged.length} before filter, ${facetRanked.afterFilterCount} after filter`);
+    intentLog(`[FamPal] Query "${query}" page ${page}: ${response.places.length} results, uniqueAdded=${uniqueAdded}, hasMore: ${response.hasMore}`);
+    intentLog(`[FamPal] Merge count after "${query}" page ${page}: ${merged.length} before filter, ${facetRanked.afterFilterCount} after filter`);
     options?.onProgress?.({
       places: facetRanked.places,
       debug,
@@ -1422,13 +1422,13 @@ export async function searchExploreIntent(
     .slice(0, 25)
     .some((place) => !facetSnapshotFromPlace(place, requestedCategory).kidFriendlySignals.includes('play_area_jungle_gym'));
   if (requiresStrictKidPlay && (finalFacetRanked.afterFilterCount === 0 || finalHasMissingKidSignal)) {
-    intentLog('[FamPals] strict kidPrefs enrichment running on final candidates', {
+    intentLog('[FamPal] strict kidPrefs enrichment running on final candidates', {
       reason: finalFacetRanked.afterFilterCount === 0 ? 'zero_after_strict' : 'missing_play_area_signal',
       candidates: finalIntentFiltered.length,
     });
     await enrichPlacesForStrictKidPrefs(finalIntentFiltered, selectedKidPrefs, requestedCategory);
     finalFacetRanked = rankAndFilterByComputedFacets(finalIntentFiltered, requestedCategory, options?.exploreFilters);
-    intentLog('[FamPals] strict kidPrefs enrichment final rerank', {
+    intentLog('[FamPal] strict kidPrefs enrichment final rerank', {
       afterFilterCount: finalFacetRanked.afterFilterCount,
     });
   }
@@ -1452,10 +1452,10 @@ export async function searchExploreIntent(
   const completedAt = performance.now();
   const timeToFirstRender = firstRenderAt ? Math.round(firstRenderAt - startedAt) : -1;
   const timeTo25Results = reached25At ? Math.round(reached25At - startedAt) : -1;
-  intentLog(`[FamPals] Intent "${intent}" filter counts: before=${debug.totalBeforeFilter}, after=${debug.totalAfterFilter}`);
-  intentLog(`[FamPals] Timing metrics: timeToFirstRenderMs=${timeToFirstRender}, timeTo25ResultsMs=${timeTo25Results}, timeToCompleteMs=${Math.round(completedAt - startedAt)}`);
+  intentLog(`[FamPal] Intent "${intent}" filter counts: before=${debug.totalBeforeFilter}, after=${debug.totalAfterFilter}`);
+  intentLog(`[FamPal] Timing metrics: timeToFirstRenderMs=${timeToFirstRender}, timeTo25ResultsMs=${timeTo25Results}, timeToCompleteMs=${Math.round(completedAt - startedAt)}`);
   if (PIPELINE_LOGS_ENABLED) {
-    console.log('[FamPals Pipeline]', {
+    console.log('[FamPal Pipeline]', {
       cacheCount: debug.pipeline?.cacheCount || 0,
       afterFilterCount: debug.pipeline?.afterFilterCount || 0,
       googleFetchedCount: debug.pipeline?.googleFetchedCount || 0,
@@ -1517,7 +1517,7 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
 
   const localCached = getCached<PlaceDetails>(DETAILS_CACHE_KEY, placeId);
   if (localCached) {
-    intentLog('[FamPals] Loaded place details from localStorage cache');
+    intentLog('[FamPal] Loaded place details from localStorage cache');
     return localCached;
   }
 
@@ -1525,12 +1525,12 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
     const { getPlaceFromFirestore, savePlaceToFirestore } = await import('./lib/placeCache');
     const firestoreCached = await getPlaceFromFirestore(placeId);
     if (firestoreCached) {
-      intentLog('[FamPals] Loaded place details from Firestore cache');
+      intentLog('[FamPal] Loaded place details from Firestore cache');
       setCache(DETAILS_CACHE_KEY, placeId, firestoreCached);
       return firestoreCached;
     }
   } catch (err) {
-    console.warn('[FamPals] Firestore cache check failed, falling back to API:', err);
+    console.warn('[FamPal] Firestore cache check failed, falling back to API:', err);
   }
 
   if (!API_BASE) return null;
@@ -1583,7 +1583,7 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
     setCache(DETAILS_CACHE_KEY, placeId, details);
 
     import('./lib/placeCache').then(m => m.savePlaceToFirestore(placeId, details)).catch(() => {});
-    intentLog('[FamPals] Cached place details (localStorage + Firestore)');
+    intentLog('[FamPal] Cached place details (localStorage + Firestore)');
     
     return details;
   } catch (error) {

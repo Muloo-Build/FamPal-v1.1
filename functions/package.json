@@ -1,5 +1,5 @@
 {
-  "name": "fampals-functions",
+  "name": "fampal-functions",
   "private": true,
   "main": "lib/index.js",
   "engines": {

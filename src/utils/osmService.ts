@@ -143,7 +143,7 @@ export async function fetchOsmVenueData(
     });
 
     if (!response.ok) {
-      console.warn('[FamPals OSM] Overpass API returned', response.status);
+      console.warn('[FamPal OSM] Overpass API returned', response.status);
       OSM_CACHE.set(cacheKey, { data: null, timestamp: Date.now() });
       return null;
     }
@@ -173,7 +173,7 @@ export async function fetchOsmVenueData(
     OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
     return data;
   } catch (error) {
-    console.warn('[FamPals OSM] Failed to fetch:', error);
+    console.warn('[FamPal OSM] Failed to fetch:', error);
     OSM_CACHE.set(cacheKey, { data: null, timestamp: Date.now() });
     return null;
   }

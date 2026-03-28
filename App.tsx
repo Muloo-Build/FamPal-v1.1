@@ -1,5 +1,5 @@
 
-// FamPals v1.1 - Family Activity Discovery App
+// FamPal v1.1 - Family Activity Discovery App
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -17,11 +17,10 @@ import {
   sendPasswordResetEmail,
   updateProfile,
 } from './lib/firebase';
-import AdminReports from './components/AdminReports';
 import { listenToUserDoc, upsertUserProfile, saveUserField, listenToSavedPlaces, upsertSavedPlace } from './lib/userData';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-import DashboardNetflix from './components/DashboardNetflix';
+
 import Profile from './components/Profile';
 import Onboarding from './components/Onboarding';
 import { AppState, User, getDefaultEntitlement, UserPreferences, SavedPlace, Preferences, Child, Pet, PartnerLink, ProfileInfo } from './types';
@@ -34,7 +33,7 @@ import { buildAccessContext, type AppAccessContext } from './lib/access';
 import { syncPlayEntitlementWithServer } from './lib/playBilling';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const AUTH_REDIRECT_PENDING_KEY = 'fampals_auth_redirect_pending';
+const AUTH_REDIRECT_PENDING_KEY = 'fampal_auth_redirect_pending';
 const BILLING_ENABLED = import.meta.env.VITE_BILLING_ENABLED !== 'false';
 const BILLING_PROVIDER = (import.meta.env.VITE_BILLING_PROVIDER || 'play').toLowerCase();
 const AUTH_DEBUG = import.meta.env.VITE_AUTH_DEBUG === 'true';
@@ -42,10 +41,10 @@ const AUTH_DEBUG = import.meta.env.VITE_AUTH_DEBUG === 'true';
 const authDebugLog = (message: string, payload?: Record<string, unknown>) => {
   if (!AUTH_DEBUG) return;
   if (payload) {
-    console.log(`[FamPals Auth] ${message}`, payload);
+    console.log(`[FamPal Auth] ${message}`, payload);
     return;
   }
-  console.log(`[FamPals Auth] ${message}`);
+  console.log(`[FamPal Auth] ${message}`);
 };
 
 // Convert Firebase Auth User to plain serializable object
@@ -106,7 +105,7 @@ const App: React.FC = () => {
   const authBypassEnabled = import.meta.env.DEV && import.meta.env.VITE_AUTH_BYPASS === 'true';
   const mockBypassUser: User = {
     uid: 'dev-bypass-user',
-    email: 'dev-bypass@local.fampals',
+    email: 'dev-bypass@local.fampal',
     displayName: 'Dev Bypass User',
     photoURL: null,
   };
@@ -123,11 +122,11 @@ const App: React.FC = () => {
   const [pendingJoinCircleId, setPendingJoinCircleId] = useState<string | null>(null);
   const [dashboardTab, setDashboardTab] = useState<'explore' | 'favorites' | 'activity' | 'memories' | 'circles' | 'partner'>('explore');
   const [useNetflixLayout, setUseNetflixLayout] = useState(() => {
-    try { return localStorage.getItem('fampals_netflix_layout') === 'true'; } catch { return false; }
+    try { return localStorage.getItem('fampal_netflix_layout') === 'true'; } catch { return false; }
   });
   const [darkMode, setDarkMode] = useState(() => {
     try {
-      const stored = localStorage.getItem('fampals_dark_mode');
+      const stored = localStorage.getItem('fampal_dark_mode');
       if (stored !== null) return stored === 'true';
       return false;
     } catch { return false; }
@@ -157,7 +156,7 @@ const App: React.FC = () => {
   const joinInFlightRef = useRef(false);
   const lastJoinCodeRef = useRef<string | null>(null);
   const navigate = useNavigate();
-  const PENDING_JOIN_KEY = 'fampals_pending_join_code';
+  const PENDING_JOIN_KEY = 'fampal_pending_join_code';
 
   type OnboardingResult = {
     profileInfo?: ProfileInfo | null;
@@ -415,7 +414,7 @@ const App: React.FC = () => {
           lastAuthUidRef.current = userAuth.uid;
         }
         const serializedUser = serializeUser(userAuth);
-        console.log('[FamPals] User authenticated:', userAuth.email);
+        console.log('[FamPal] User authenticated:', userAuth.email);
         setState(prev => ({ ...prev, isAuthenticated: true, user: serializedUser }));
         setView((prev) => (prev === 'login' ? 'dashboard' : prev));
         authDebugLog('Auth user present, moving out of login state');
@@ -424,7 +423,7 @@ const App: React.FC = () => {
         // Safety timeout to prevent stuck loading state if Firestore fails
         const loadingTimeout = setTimeout(() => {
           if (loading) {
-            console.warn('[FamPals] Firestore timeout - forcing load');
+            console.warn('[FamPal] Firestore timeout - forcing load');
             setLoading(false);
             setOnboardingChecked(true);
           }
@@ -496,7 +495,7 @@ const App: React.FC = () => {
                 memories: (() => {
                   const mems = dbState.memories || [];
                   if (mems.length > 0) {
-                    console.log('[FamPals] Loaded memories from Firestore:', mems.length, 'first memory photos:', {
+                    console.log('[FamPal] Loaded memories from Firestore:', mems.length, 'first memory photos:', {
                       photoUrl: mems[0]?.photoUrl,
                       photoUrls: mems[0]?.photoUrls,
                       photoThumbUrl: mems[0]?.photoThumbUrl,
@@ -931,7 +930,7 @@ const App: React.FC = () => {
     const toggleDiscoveryMode = () => {
       const next = !useNetflixLayout;
       setUseNetflixLayout(next);
-      try { localStorage.setItem('fampals_netflix_layout', next ? 'true' : 'false'); } catch {}
+      try { localStorage.setItem('fampal_netflix_layout', next ? 'true' : 'false'); } catch {}
     };
 
     const dashboardProps = {
@@ -948,7 +947,7 @@ const App: React.FC = () => {
       discoveryMode: useNetflixLayout,
       onToggleDiscoveryMode: toggleDiscoveryMode,
     };
-    const DashboardComponent = useNetflixLayout ? DashboardNetflix : Dashboard;
+    const DashboardComponent = Dashboard;
 
     if (state.user && !needsOnboarding && view === 'login') {
       return <DashboardComponent {...dashboardProps} />;
@@ -971,9 +970,7 @@ const App: React.FC = () => {
           />
         );
       case 'profile':
-        return <Profile state={state} isGuest={isGuest} accessContext={accessContext} onSignOut={handleSignOut} setView={setView} onUpdateState={handleUpdateState} onResetOnboarding={() => setNeedsOnboarding(true)} darkMode={darkMode} onToggleDarkMode={() => { const next = !darkMode; setDarkMode(next); try { localStorage.setItem('fampals_dark_mode', next ? 'true' : 'false'); } catch {} }} />;
-      case 'admin':
-        return <AdminReports userId={state.user?.uid || ''} onBack={() => setView('dashboard')} />;
+        return <Profile state={state} isGuest={isGuest} accessContext={accessContext} onSignOut={handleSignOut} setView={setView} onUpdateState={handleUpdateState} onResetOnboarding={() => setNeedsOnboarding(true)} darkMode={darkMode} onToggleDarkMode={() => { const next = !darkMode; setDarkMode(next); try { localStorage.setItem('fampal_dark_mode', next ? 'true' : 'false'); } catch {} }} />;
       default:
         return <Login onLogin={handleSignIn} onEmailSignIn={handleEmailSignIn} onEmailSignUp={handleEmailSignUp} onForgotPassword={handleForgotPassword} onGuestLogin={handleGuestLogin} error={error} />;
     }

@@ -21,7 +21,7 @@ import {
   getFilterButtonLabel,
   getSelectedChipItems,
 } from '../lib/exploreFilters';
-import { ShareMemoryModal } from './ShareMemory';
+// import { ShareMemoryModal } from './ShareMemory';
 import { db, doc, getDoc, onSnapshot, auth, storage, ref, uploadBytesResumable, getDownloadURL } from '../lib/firebase';
 import { upsertSavedPlace, deleteSavedPlace } from '../lib/userData';
 import { loadPlaceAccessibilityByIds, rankPlacesWithAccessibilityNeeds, submitAccessibilityReport } from '../lib/placeAccessibility';
@@ -30,7 +30,7 @@ import { loadPlaceFamilyFacilitiesByIds, submitFamilyFacilitiesReport } from '..
 import { loadPlacePetFriendlyByIds, submitPetFriendlyReport } from '../lib/placePetFriendly';
 import { createReport as createCommunityReport, aggregateReportSignals, type CommunityReportPayload } from '../src/services/communityReports';
 import { generateFamilyFacilitiesSummary } from '../src/utils/familyFacilities';
-import MemoryCreate from './MemoryCreate';
+// import MemoryCreate from './MemoryCreate';
 import {
   CircleDoc,
   createCircle,
@@ -41,11 +41,22 @@ import {
   saveCirclePlace,
   deleteCircle,
 } from '../lib/circles';
-import { ensurePartnerThread, fetchPartnerThreadState, savePartnerThreadFamilyPool, savePartnerThreadMemory, savePartnerThreadNote, savePartnerThreadPlace } from '../lib/partnerThreads';
+// import { ensurePartnerThread, fetchPartnerThreadState, savePartnerThreadFamilyPool, savePartnerThreadMemory, savePartnerThreadNote, savePartnerThreadPlace } from '../lib/partnerThreads';
 import { Timestamp } from 'firebase/firestore';
 import type { AppAccessContext } from '../lib/access';
 import { formatPriceLevel as formatPriceLevelUtil } from '../src/utils/priceLevel';
-import ActivityDashboard from './ActivityDashboard';
+// import ActivityDashboard from './ActivityDashboard';
+
+// Stub for missing components/functions
+const ActivityDashboard = (props: any): null => null;
+const MemoryCreate = (props: any): null => null;
+const ShareMemoryModal = (props: any): null => null;
+const ensurePartnerThread = async (a: any, b: any) => {};
+const fetchPartnerThreadState = async (a: any) => ({ notes: {}, sharedPlaces: [], sharedMemories: [], familyPool: { ai_requests_this_month: 0, ai_requests_reset_date: '' }, partnerLink: null });
+const savePartnerThreadFamilyPool = async (a: any, b: any) => {};
+const savePartnerThreadNote = async (a: any, b: any) => {};
+const savePartnerThreadPlace = async (a: any, b: any) => {};
+const savePartnerThreadMemory = async (a: any, b: any) => Promise.resolve();
 
 interface DashboardProps {
   state: AppState;
@@ -401,62 +412,11 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     }
 
     let cancelled = false;
-    const syncPartnerThread = async () => {
-      try {
-        await ensurePartnerThread(uid, link.partnerUserId);
-        const data = await fetchPartnerThreadState();
-        if (cancelled) return;
-
-        setPartnerNotes((data.notes || []) as PartnerNote[]);
-        setNoteError(null);
-        onUpdateState('partnerSharedPlaces', data.sharedPlaces || []);
-        setPartnerSharedMemories(data.sharedMemories || []);
-
-        const isFamilyPlan = state.entitlement?.plan_tier === 'family';
-        if (isFamilyPlan) {
-          const pool = data.familyPool || {};
-          const poolResetDate = pool?.ai_requests_reset_date;
-          const nextResetDate = getNextResetDate();
-          const resetKey = `${uid}:${poolResetDate || 'none'}`;
-          const shouldReset = poolResetDate ? new Date() >= new Date(poolResetDate) : true;
-          if ((shouldReset || !pool?.ai_requests_reset_date) && familyPoolResetRef.current !== resetKey) {
-            familyPoolResetRef.current = resetKey;
-            const nextPool = await savePartnerThreadFamilyPool({
-              plan_tier: 'family',
-              ai_requests_this_month: shouldReset ? 0 : (pool?.ai_requests_this_month || 0),
-              ai_requests_reset_date: nextResetDate,
-            });
-            if (cancelled) return;
-            onUpdateState('familyPool', nextPool || undefined);
-          } else {
-            onUpdateState('familyPool', pool ? {
-              ai_requests_this_month: pool.ai_requests_this_month || 0,
-              ai_requests_reset_date: pool.ai_requests_reset_date || getNextResetDate(),
-            } : undefined);
-          }
-        } else {
-          onUpdateState('familyPool', undefined);
-        }
-
-        if (data.partnerLink && (
-          link.partnerName !== data.partnerLink.partnerName ||
-          link.partnerEmail !== data.partnerLink.partnerEmail ||
-          link.partnerPhotoURL !== data.partnerLink.partnerPhotoURL
-        )) {
-          onUpdateState('partnerLink', {
-            ...link,
-            ...data.partnerLink,
-          });
-        }
-      } catch (err) {
-        console.warn('Failed to initialize partner thread.', err);
-        setNoteError('Unable to load notes right now.');
-      }
-    };
-
-    void syncPartnerThread();
+    // Partner thread syncing disabled - dependent files deleted
+    // const syncPartnerThread = async () => { ... };
+    // void syncPartnerThread();
     const intervalId = window.setInterval(() => {
-      void syncPartnerThread();
+      // Partner thread sync disabled
     }, 10000);
 
     return () => {
@@ -485,17 +445,8 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     const link = state.partnerLink;
     const createdByName = state.user.displayName || state.user.email || 'You';
 
-    try {
-      await ensurePartnerThread(uid, link.partnerUserId);
-      const savedNote = await savePartnerThreadNote(noteInput.trim(), createdByName);
-      setPartnerNotes((prev) => [...prev, savedNote].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
-      setNoteInput('');
-    } catch (err: any) {
-      console.warn('Failed to send partner note.', err);
-      setNoteError('Failed to send note. Please try again.');
-    } finally {
-      setNoteSending(false);
-    }
+    // Partner thread disabled
+    setNoteSending(false);
   };
 
   const handleShareMemoryExternal = async (memory: Memory) => {
@@ -1197,8 +1148,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
       return;
     }
     try {
-      await ensurePartnerThread(state.user.uid, state.partnerLink.partnerUserId);
-      await savePartnerThreadPlace(groupPlace);
+      // Partner thread disabled
       onUpdateState('partnerSharedPlaces', [
         groupPlace,
         ...(state.partnerSharedPlaces || []).filter((place) => place.placeId !== groupPlace.placeId),
@@ -1289,16 +1239,9 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     const newMemory: Memory = { ...memory, id: Date.now().toString() };
     onUpdateState('memories', [...state.memories, newMemory]);
     import('../src/services/gamification').then(m => { m.awardPoints('save_memory'); m.invalidateGamificationCache(); }).catch(() => {});
-    if (canSyncCloud && state.partnerLink?.status === 'accepted' && state.partnerLink.partnerUserId && memory.sharedWithPartner && state.user?.uid) {
-      ensurePartnerThread(state.user.uid, state.partnerLink.partnerUserId)
-        .then(() => savePartnerThreadMemory({
-          ...newMemory,
-          sharedWithPartner: true,
-        }))
-        .then(() => {
-          setPartnerSharedMemories((prev) => [{ ...newMemory, sharedWithPartner: true }, ...prev.filter((item) => item.id !== newMemory.id)]);
-        })
-        .catch((err) => console.warn('Failed to share memory with partner.', err));
+    // Partner thread disabled
+    if (false && canSyncCloud && state.partnerLink?.status === 'accepted' && state.partnerLink.partnerUserId && memory.sharedWithPartner && state.user?.uid) {
+      // Partner memory sharing disabled
     }
 
     if (memory.placeId) {
@@ -1507,19 +1450,11 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
       state.user?.uid
     ) {
       const resetDate = state.familyPool?.ai_requests_reset_date || state.entitlement?.ai_requests_reset_date || getNextResetDate();
-      try {
-        const nextPool = await savePartnerThreadFamilyPool({
-          plan_tier: 'family',
-          ai_requests_this_month: (state.familyPool?.ai_requests_this_month || 0) + 1,
-          ai_requests_reset_date: resetDate,
-        });
-        onUpdateState('familyPool', nextPool || {
-          ai_requests_this_month: (state.familyPool?.ai_requests_this_month || 0) + 1,
-          ai_requests_reset_date: resetDate,
-        });
-      } catch (err) {
-        console.warn('Failed to increment family AI pool.', err);
-      }
+      // Partner thread disabled
+      onUpdateState('familyPool', {
+        ai_requests_this_month: (state.familyPool?.ai_requests_this_month || 0) + 1,
+        ai_requests_reset_date: resetDate,
+      });
       return;
     }
 
@@ -2589,15 +2524,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
           }}
           hasLinkedPartner={hasLinkedPartner}
           partnerName={partnerName || undefined}
-          onShareToPartner={hasLinkedPartner ? async (memory) => {
-            if (!state.user?.uid || !partnerUserId) return;
-            await savePartnerThreadMemory({
-              ...memory,
-              sharedAt: new Date().toISOString(),
-              sharedBy: state.user.uid,
-              sharedWithPartner: true,
-            }).catch((err) => console.warn('Failed to share memory with partner.', err));
-          } : undefined}
+          onShareToPartner={undefined}
           onClose={() => setShareMemory(null)}
         />
       )}

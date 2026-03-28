@@ -14,6 +14,42 @@
   --fp-body: #4a5568;
   --fp-outline-soft: rgba(24, 0, 82, 0.08);
   --fp-shadow: 0 24px 60px rgba(24, 0, 82, 0.08);
+  --fp-success: #38a169;
+  --fp-warning: #d97706;
+  --fp-error: #e53e3e;
+  --fp-radius-card: 24px;
+  --fp-radius-chip: 9999px;
+  --fp-radius-btn: 9999px;
+}
+
+/* Kinship Modern utility classes */
+.fp-btn-primary {
+  @apply bg-[#0052ff] text-white font-bold rounded-full px-6 py-3
+         shadow-[0_4px_20px_rgba(0,82,255,0.28)]
+         active:scale-95 transition-all;
+}
+
+.fp-btn-ghost {
+  @apply bg-white/60 backdrop-blur-sm border border-[rgba(24,0,82,0.08)]
+         text-[#180052] font-semibold rounded-full px-5 py-2.5
+         active:scale-95 transition-all;
+}
+
+.fp-chip {
+  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
+         bg-[#f3faff] text-[#0052ff] border border-[rgba(0,82,255,0.12)];
+}
+
+.fp-chip-active {
+  @apply bg-[#0052ff] text-white border-transparent;
+}
+
+.fp-card {
+  @apply bg-white rounded-[24px] shadow-[0_8px_32px_rgba(24,0,82,0.08)] overflow-hidden;
+}
+
+.fp-section-label {
+  @apply text-[11px] font-black uppercase tracking-[0.15em] text-[#0052ff];
 }
 
 * {

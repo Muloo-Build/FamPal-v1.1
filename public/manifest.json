@@ -1,6 +1,6 @@
 {
-  "name": "FamPals - Family Adventures",
-  "short_name": "FamPals",
+  "name": "FamPal - Family Adventures",
+  "short_name": "FamPal",
   "description": "Discover family-friendly activities near you",
   "start_url": "/",
   "display": "standalone",

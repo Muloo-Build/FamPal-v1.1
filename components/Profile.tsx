@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, Child, Pet, PetType, PartnerLink, Preferences, UserAccessibilityNeeds, FOOD_PREFERENCES, ALLERGY_OPTIONS, ACCESSIBILITY_OPTIONS, ACTIVITY_PREFERENCES, PET_TYPE_OPTIONS, PLAN_LIMITS } from '../types';
+import { AppState, Child, Preferences, UserAccessibilityNeeds, FOOD_PREFERENCES, ALLERGY_OPTIONS, ACCESSIBILITY_OPTIONS, ACTIVITY_PREFERENCES, PLAN_LIMITS } from '../types';
 import PlanBilling from './PlanBilling';
-import ExplorerLevel from './ExplorerLevel';
 import { getLimits, getPlanDisplayName, canUseAI, isPaidTier } from '../lib/entitlements';
 import { storage, auth, ref, uploadBytes, getDownloadURL, writeBatch } from '../lib/firebase';
 import type { AppAccessContext } from '../lib/access';
@@ -18,7 +17,7 @@ import ManageMyData from '../src/components/ManageMyData';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
 const DELETE_CONFIRM_TEXT = 'DELETE';
-const DELETE_REAUTH_PENDING_KEY = 'fampals_delete_reauth_pending';
+const DELETE_REAUTH_PENDING_KEY = 'fampal_delete_reauth_pending';
 
 interface ProfileProps {
   state: AppState;
@@ -28,34 +27,14 @@ interface ProfileProps {
   setView: (view: string) => void;
   onUpdateState: (key: keyof AppState, value: any) => void;
   onResetOnboarding?: () => void;
-  darkMode?: boolean;
-  onToggleDarkMode?: () => void;
 }
 
-const generateInviteCode = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-};
-
-const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding, darkMode, onToggleDarkMode }) => {
+const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding }) => {
   const [childName, setChildName] = useState('');
   const [childAge, setChildAge] = useState('');
-  const [petName, setPetName] = useState('');
-  const [petType, setPetType] = useState<PetType>('dog');
-  const [spouseEmail, setSpouseEmail] = useState('');
-  const [partnerCode, setPartnerCode] = useState('');
-  const [showCodeInput, setShowCodeInput] = useState(false);
-  const [codeCopied, setCodeCopied] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
   const [editingChildId, setEditingChildId] = useState<string | null>(null);
   const [showPlanBilling, setShowPlanBilling] = useState(false);
-  const [showAdminCode, setShowAdminCode] = useState(false);
-  const [adminCode, setAdminCode] = useState('');
-  const [adminTapCount, setAdminTapCount] = useState(0);
   const [uploadingProfilePic, setUploadingProfilePic] = useState(false);
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [showManageData, setShowManageData] = useState(false);
@@ -165,265 +144,11 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     onUpdateState('children', state.children.filter(c => c.id !== id));
   };
 
-  const handleAddPet = () => {
-    if (!petName.trim()) return;
-    const newPet: Pet = { id: Date.now().toString(), name: petName.trim(), type: petType };
-    onUpdateState('pets', [...(state.pets || []), newPet]);
-    setPetName('');
-    setPetType('dog');
-  };
-
-  const handleRemovePet = (id: string) => {
-    onUpdateState('pets', (state.pets || []).filter(p => p.id !== id));
-  };
-
-  const handleGenerateCode = () => {
-    if (!canLinkPartner) {
-      setShowPlanBilling(true);
-      return;
-    }
-    const code = generateInviteCode();
-    const partnerLink: PartnerLink = {
-      inviteCode: code,
-      linkedAt: new Date().toISOString(),
-      status: 'pending'
-    };
-    onUpdateState('partnerLink', partnerLink);
-  };
-
-  const handleCopyCode = async () => {
-    if (state.partnerLink?.inviteCode) {
-      await navigator.clipboard.writeText(state.partnerLink.inviteCode);
-      setCodeCopied(true);
-      setTimeout(() => setCodeCopied(false), 2000);
-    }
-  };
-
-  const handleShareCode = () => {
-    if (state.partnerLink?.inviteCode) {
-      const message = `Join me on FamPals! Use my partner code: ${state.partnerLink.inviteCode}\n\nDownload the app: ${window.location.origin}`;
-      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
-    }
-  };
-
-  const handleAdminCode = async () => {
-    if (!import.meta.env.DEV) {
-      alert('Admin code is disabled in production builds.');
-      return;
-    }
-    const ADMIN_CODE = 'FAMPRO2026';
-    if (adminCode.toUpperCase() === ADMIN_CODE) {
-      if (!auth?.currentUser) {
-        alert('Please sign in first.');
-        return;
-      }
-      try {
-        const now = new Date();
-        const resetDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const proEntitlement = {
-          subscription_tier: 'pro',
-          subscription_status: 'active',
-          subscription_source: 'admin',
-          gemini_credits_used: 0,
-          gemini_credits_limit: 100,
-          usage_reset_month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
-          plan_tier: 'pro',
-          plan_status: 'active',
-          entitlement_source: 'admin',
-          entitlement_start_date: now.toISOString(),
-          entitlement_end_date: null,
-          ai_requests_this_month: 0,
-          ai_requests_reset_date: resetDate.toISOString(),
-        };
-        const idToken = await auth.currentUser.getIdToken();
-        const response = await fetch(`${API_BASE}/api/dev/grant-pro`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ entitlement: proEntitlement }),
-        });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || 'Failed to apply admin code');
-        }
-        onUpdateState('entitlement', proEntitlement);
-        setAdminCode('');
-        setShowAdminCode(false);
-        alert('Pro features activated! You now have full access to test all features.');
-      } catch (err) {
-        console.error('Failed to apply admin code', err);
-        alert('Failed to apply code. Please try again.');
-      }
-    } else {
-      alert('Invalid code. Please try again.');
-    }
-  };
-
-  const handleVersionTap = () => {
-    setAdminTapCount(prev => {
-      const newCount = prev + 1;
-      if (newCount >= 5) {
-        setShowAdminCode(true);
-        return 0;
-      }
-      return newCount;
-    });
-  };
-
-  const handleJoinWithCode = async () => {
-    if (!canSyncCloud) {
-      alert('Partner linking is disabled in read-only review mode.');
-      return;
-    }
-    if (!canLinkPartner) {
-      alert('Partner linking is available on Pro or Family plans.');
-      setShowPlanBilling(true);
-      return;
-    }
-    if (!partnerCode || partnerCode.length !== 6) {
-      alert('Please enter a valid 6-character code.');
-      return;
-    }
-    if (!auth?.currentUser) {
-      alert('Please sign in to link with a partner.');
-      return;
-    }
-
-    const normalizedCode = partnerCode.toUpperCase();
-    try {
-      const idToken = await auth.currentUser.getIdToken();
-      const selfProfileName = state.user?.displayName || state.user?.email || 'Partner';
-      const response = await fetch(`${API_BASE}/api/partner/link`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ 
-          inviteCode: normalizedCode,
-          selfName: selfProfileName,
-        }),
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to link');
-      }
-
-      const partnerLink = data.partnerLink || undefined;
-      onUpdateState('partnerLink', partnerLink);
-      setPartnerCode('');
-      setShowCodeInput(false);
-      alert(`Successfully linked with ${partnerLink?.partnerName || 'your partner'}! The Partner tab is now available.`);
-    } catch (err: any) {
-      console.warn('[FamPals] Partner lookup failed:', err);
-      alert(err?.message || 'Failed to find partner. Please try again.');
-    }
-  };
-
-  const handleUnlinkPartner = async () => {
-    if (!canSyncCloud) {
-      onUpdateState('partnerLink', undefined);
-      onUpdateState('spouseName', undefined);
-      onUpdateState('linkedEmail', undefined);
-      return;
-    }
-    if (!auth?.currentUser?.uid) {
-      onUpdateState('partnerLink', undefined);
-      onUpdateState('spouseName', undefined);
-      onUpdateState('linkedEmail', undefined);
-      return;
-    }
-    const uid = auth.currentUser.uid;
-    const partnerUserId = state.partnerLink?.partnerUserId;
-    
-    // If no partner linked yet (pending code), clear it through the shared user-data path.
-    if (!partnerUserId) {
-      try {
-        await saveUserField(uid, 'partnerLink', undefined);
-        onUpdateState('partnerLink', undefined);
-        onUpdateState('spouseName', undefined);
-        onUpdateState('linkedEmail', undefined);
-      } catch (err) {
-        console.warn('Failed to clear pending code.', err);
-        // Still clear local state
-        onUpdateState('partnerLink', undefined);
-        onUpdateState('spouseName', undefined);
-        onUpdateState('linkedEmail', undefined);
-      }
-      return;
-    }
-    
-    // Use backend API to unlink both users (bypasses Firestore rules)
-    try {
-      console.log('[FamPals] Unlinking partner via API');
-      const idToken = await auth.currentUser?.getIdToken();
-      if (!idToken) {
-        throw new Error('Not authenticated');
-      }
-      
-      const response = await fetch(`${API_BASE}/api/partner/unlink`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({}), // No partnerUserId needed - server derives from user doc
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to unlink');
-      }
-      
-      console.log('[FamPals] Partner unlink successful via API');
-      onUpdateState('partnerLink', undefined);
-      onUpdateState('spouseName', undefined);
-      onUpdateState('linkedEmail', undefined);
-      alert('Partner link removed successfully.');
-    } catch (err: any) {
-      console.warn('[FamPals] Failed to unlink partner:', err);
-      alert('Unable to unlink right now. Please try again.');
-    }
-  };
-  
-  const refreshPartnerStatus = async () => {
-    if (!canSyncCloud) {
-      alert('Partner refresh is disabled in read-only review mode.');
-      return;
-    }
-    if (!auth?.currentUser) {
-      return;
-    }
-    try {
-      console.log('[FamPals] Refreshing partner status via API');
-      const idToken = await auth.currentUser.getIdToken();
-      
-      const response = await fetch(`${API_BASE}/api/partner/status`, {
-        headers: { 'Authorization': `Bearer ${idToken}` },
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch partner status');
-      }
-      
-      const data = await response.json();
-      const partnerLink = data.partnerLink || undefined;
-      console.log('[FamPals] Refreshed partnerLink:', partnerLink);
-      onUpdateState('partnerLink', partnerLink);
-      alert('Partner status refreshed!');
-    } catch (err: any) {
-      console.warn('[FamPals] Failed to refresh partner status:', err);
-      alert('Unable to refresh partner status. Please try again.');
-    }
-  };
 
   const shareApp = async () => {
     const shareData = {
-      title: 'FamPals',
-      text: 'Check out FamPals for finding the best kid and pet-friendly spots!',
+      title: 'FamPal',
+      text: 'Check out FamPal for finding the best kid and pet-friendly spots!',
       url: window.location.origin,
     };
     try {
@@ -519,9 +244,9 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     const devLog = (message: string, details?: unknown) => {
       if (!import.meta.env.DEV) return;
       if (details !== undefined) {
-        console.log(`[FamPals Delete] ${message}`, details);
+        console.log(`[FamPal Delete] ${message}`, details);
       } else {
-        console.log(`[FamPals Delete] ${message}`);
+        console.log(`[FamPal Delete] ${message}`);
       }
     };
 
@@ -549,7 +274,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
         setDeleteError('Failed to delete your account. Please try again.');
       }
       if (import.meta.env.DEV) {
-        console.warn('[FamPals Delete] Account deletion failed', err);
+        console.warn('[FamPal Delete] Account deletion failed', err);
       }
     } finally {
       setDeleteInProgress(false);
@@ -569,7 +294,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     setDeleteError(null);
     try {
       if (import.meta.env.DEV) {
-        console.log('[FamPals Delete] Re-auth using redirect flow');
+        console.log('[FamPal Delete] Re-auth using redirect flow');
       }
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem(DELETE_REAUTH_PENDING_KEY, '1');
@@ -578,7 +303,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     } catch (err: any) {
       setDeleteError(err?.message || 'Re-authentication failed. Please try again.');
       if (import.meta.env.DEV) {
-        console.warn('[FamPals Delete] Re-authentication failed', err);
+        console.warn('[FamPal Delete] Re-authentication failed', err);
       }
     } finally {
       setReauthInProgress(false);
@@ -676,7 +401,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
 
         <div className="bg-gradient-to-br from-sky-500 to-blue-600 rounded-[40px] p-8 text-white shadow-xl shadow-sky-200 space-y-4">
           <h3 className="text-lg font-black leading-tight">Spread the Adventure</h3>
-          <p className="text-white/80 text-xs font-bold leading-relaxed">Know another parent who needs better weekend plans? Share FamPals with your group chat.</p>
+          <p className="text-white/80 text-xs font-bold leading-relaxed">Know another parent who needs better weekend plans? Share FamPal with your group chat.</p>
           <button 
             onClick={shareApp}
             className="w-full h-14 bg-white text-sky-600 rounded-2xl font-black text-xs uppercase tracking-widest active-press shadow-lg"
@@ -853,76 +578,6 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
           )}
         </div>
 
-        <div className="space-y-6">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Pets</h3>
-          {!isGuest ? (
-            <div className="bg-white rounded-[40px] p-6 border border-slate-100 shadow-sm space-y-4">
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Add your pets to find pet-friendly spots and activities.
-              </p>
-
-              <div className="space-y-3">
-                {(state.pets || []).map(pet => {
-                  const typeOption = PET_TYPE_OPTIONS.find(o => o.value === pet.type);
-                  return (
-                    <div key={pet.id} className="bg-slate-50 rounded-2xl border border-slate-100/50 overflow-hidden">
-                      <div className="flex justify-between items-center p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-lg">
-                            {typeOption?.icon || '🐾'}
-                          </div>
-                          <div>
-                            <p className="font-black text-sm text-[#1E293B]">{pet.name}</p>
-                            <p className="text-[9px] text-amber-500 font-black uppercase tracking-widest">{typeOption?.label || pet.type}</p>
-                          </div>
-                        </div>
-                        <button onClick={() => handleRemovePet(pet.id)} className="text-slate-300 font-black text-[10px] uppercase hover:text-rose-500 transition-colors">×</button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleAddPet();
-                }}
-                className="space-y-3"
-              >
-                <div className="flex gap-3">
-                  <input
-                    placeholder="Pet's Name"
-                    className="flex-1 h-14 bg-slate-50 border-none rounded-2xl px-5 text-sm font-bold outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
-                    value={petName}
-                    onChange={e => setPetName(e.target.value)}
-                  />
-                  <select
-                    value={petType}
-                    onChange={e => setPetType(e.target.value as PetType)}
-                    className="w-28 h-14 bg-slate-50 border-none rounded-2xl px-3 text-sm font-bold outline-none focus:bg-white focus:ring-2 focus:ring-amber-100 appearance-none text-center"
-                  >
-                    {PET_TYPE_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  type="submit"
-                  className="w-full h-12 bg-amber-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-amber-100 active-press flex items-center justify-center gap-2"
-                >
-                  <span>+</span> Add Pet
-                </button>
-              </form>
-            </div>
-          ) : (
-            <div className="bg-white rounded-[40px] p-6 border border-slate-100 shadow-sm text-center">
-              <p className="text-xs text-slate-400">
-                Create an account to save your pets' details and find pet-friendly spots.
-              </p>
-            </div>
-          )}
-        </div>
 
         {!isGuest && (
           <div className="space-y-6">
@@ -1076,131 +731,8 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
         )}
 
         {!isGuest && (
-          <div className="space-y-6">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Connections</h3>
-            <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm space-y-6">
-              {state.partnerLink ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-5 bg-sky-50 rounded-3xl border border-sky-100">
-                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm text-rose-400">
-                      <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
-                    </div>
-                    <div className="flex-1">
-                      {state.partnerLink.status === 'accepted' ? (
-                        <>
-                          <p className="text-sm font-black text-sky-900">{state.partnerLink.partnerName || 'Partner'}</p>
-                          <p className="text-[10px] text-green-500 font-black uppercase tracking-widest">Connected</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-black text-sky-900">Your Invite Code</p>
-                          <p className="text-2xl font-black text-purple-500 tracking-[0.3em] mt-1">{state.partnerLink.inviteCode}</p>
-                          <p className="text-[10px] text-amber-500 font-black uppercase tracking-widest mt-1">Waiting for partner</p>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <button 
-                        onClick={refreshPartnerStatus}
-                        className="text-sky-400 hover:text-sky-600 text-xs font-bold transition-colors"
-                      >
-                        Refresh
-                      </button>
-                      <button 
-                        onClick={handleUnlinkPartner}
-                        className="text-slate-300 hover:text-rose-500 text-xs font-bold transition-colors"
-                      >
-                        Unlink
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {state.partnerLink.status === 'pending' && (
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={handleCopyCode}
-                          className="flex-1 h-12 bg-slate-100 rounded-2xl text-[11px] font-black uppercase tracking-widest text-slate-600 active-press"
-                        >
-                          {codeCopied ? '✓ Copied!' : 'Copy Code'}
-                        </button>
-                        <button 
-                          onClick={handleShareCode}
-                          className="flex-1 h-12 bg-green-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active-press"
-                        >
-                          Share via WhatsApp
-                        </button>
-                      </div>
-                      <p className="text-xs text-slate-400 text-center">Partner connected? The app updates automatically.</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <p className="text-sm text-slate-500 text-center">Link with your partner to share saved places and plan adventures together.</p>
-                  
-                  {!canLinkPartner ? (
-                    <div className="space-y-3">
-                      <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-center">
-                        <p className="text-sm font-bold text-amber-700">Partner linking is a Pro or Family feature.</p>
-                        <p className="text-xs text-amber-600 mt-1">Upgrade to start sharing places and memories.</p>
-                      </div>
-                      <button
-                        onClick={() => setShowPlanBilling(true)}
-                        className="w-full h-12 bg-amber-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active-press"
-                      >
-                        View Plans
-                      </button>
-                    </div>
-                  ) : showCodeInput ? (
-                    <div className="space-y-3">
-                      <input 
-                        placeholder="Enter 6-digit code" 
-                        className="w-full h-14 bg-slate-50 border-none rounded-2xl px-5 text-lg font-black text-center uppercase tracking-[0.2em] outline-none"
-                        maxLength={6}
-                        value={partnerCode}
-                        onChange={e => setPartnerCode(e.target.value.toUpperCase())}
-                      />
-                      <button 
-                        onClick={handleJoinWithCode}
-                        disabled={partnerCode.length !== 6}
-                        className="w-full h-14 bg-purple-500 text-white rounded-2xl text-sm font-black uppercase tracking-widest active-press disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Join with Code
-                      </button>
-                      <button 
-                        onClick={() => { setShowCodeInput(false); setPartnerCode(''); }}
-                        className="w-full text-slate-400 text-sm font-medium py-2"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={handleGenerateCode}
-                        className="flex-1 h-14 bg-purple-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active-press"
-                      >
-                        Generate Invite Code
-                      </button>
-                      <button 
-                        onClick={() => setShowCodeInput(true)}
-                        className="flex-1 h-14 bg-slate-100 rounded-2xl text-[11px] font-black uppercase tracking-widest text-slate-600 active-press"
-                      >
-                        I Have a Code
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {!isGuest && (
           <div className="space-y-4">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Explorer Level</h3>
-            <ExplorerLevel uid={state.user?.uid || undefined} />
           </div>
         )}
 
@@ -1234,35 +766,6 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
           </div>
         )}
 
-        {showAdminCode && (
-          <div className="bg-gradient-to-br from-violet-50 to-purple-50 rounded-[32px] border border-purple-200 shadow-sm p-6 space-y-4">
-            <h3 className="text-xs font-black text-purple-600 uppercase tracking-widest">Admin Access</h3>
-            <input
-              type="text"
-              value={adminCode}
-              onChange={(e) => setAdminCode(e.target.value.toUpperCase())}
-              placeholder="Enter admin code"
-              className="w-full h-14 bg-white border border-purple-200 rounded-2xl px-5 text-lg font-black text-center uppercase tracking-[0.15em] outline-none focus:ring-2 focus:ring-purple-400"
-              maxLength={10}
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={handleAdminCode}
-                disabled={!adminCode.trim()}
-                className="flex-1 h-12 bg-purple-500 text-white rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50"
-              >
-                Activate
-              </button>
-              <button
-                onClick={() => { setShowAdminCode(false); setAdminCode(''); }}
-                className="px-4 h-12 bg-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
         {!isGuest && onResetOnboarding && (
           <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden mb-4">
             <button 
@@ -1281,8 +784,8 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
         <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
           <button
             onClick={() => {
-              const current = localStorage.getItem('fampals_netflix_layout') === 'true';
-              localStorage.setItem('fampals_netflix_layout', current ? 'false' : 'true');
+              const current = localStorage.getItem('fampal_netflix_layout') === 'true';
+              localStorage.setItem('fampal_netflix_layout', current ? 'false' : 'true');
               window.location.reload();
             }}
             className="w-full flex items-center justify-between p-6 text-slate-500 font-semibold text-sm hover:bg-purple-50 hover:text-purple-600 transition-colors"
@@ -1292,35 +795,12 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
               <span>Discovery Mode</span>
             </div>
             <span className={`text-xs px-2 py-1 rounded-full font-bold ${
-              localStorage.getItem('fampals_netflix_layout') === 'true'
+              localStorage.getItem('fampal_netflix_layout') === 'true'
                 ? 'text-purple-600 bg-purple-50'
                 : 'text-slate-400 bg-slate-100'
             }`}>
-              {localStorage.getItem('fampals_netflix_layout') === 'true' ? 'On' : 'Off'}
+              {localStorage.getItem('fampal_netflix_layout') === 'true' ? 'On' : 'Off'}
             </span>
-          </button>
-        </div>
-
-        <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
-          <button
-            onClick={onToggleDarkMode}
-            className="w-full flex items-center justify-between p-6 text-slate-500 font-semibold text-sm hover:bg-purple-50 hover:text-purple-600 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              {darkMode ? (
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>
-              ) : (
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" /></svg>
-              )}
-              <span>Dark Mode</span>
-            </div>
-            <div className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-              darkMode ? 'bg-purple-500' : 'bg-slate-300'
-            }`}>
-              <span data-toggle-knob className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-                darkMode ? 'translate-x-5' : 'translate-x-0'
-              }`} />
-            </div>
           </button>
         </div>
 
@@ -1443,16 +923,6 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
             <span>→</span>
           </button>
         </div>
-        {!isGuest && (
-          <div className="text-center py-4">
-            <button
-              onClick={handleVersionTap}
-              className="text-xs text-slate-300 hover:text-slate-400 transition-colors"
-            >
-              Version {appVersion}
-            </button>
-          </div>
-        )}
       </div>
 
       {showManageData && (

@@ -26,7 +26,7 @@ const GroupsList: React.FC<GroupsListProps> = ({ circles, onCreateCircle, onJoin
   const canCreateMore = maxCircles === Infinity || circles.length < maxCircles;
 
   const handleCreate = () => {
-    console.log("[FamPals] handleCreate called, name:", newGroupName, "canCreateMore:", canCreateMore);
+    console.log("[FamPal] handleCreate called, name:", newGroupName, "canCreateMore:", canCreateMore);
     if (newGroupName.trim() && canCreateMore) {
       onCreateCircle(newGroupName.trim());
       setNewGroupName('');

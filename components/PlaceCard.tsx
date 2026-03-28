@@ -1,7 +1,22 @@
 import React from 'react';
-import { Place } from '../types';
+import { Place, FamilyFacilityValue, PetFriendlyFeatureValue } from '../types';
 import AccessibilityBadges from '../src/components/AccessibilityBadges';
 import { formatPriceLevel } from '../src/utils/priceLevel';
+import { Baby, Dog } from 'lucide-react';
+
+const FacilityChips: React.FC<{ family?: FamilyFacilityValue[], pets?: PetFriendlyFeatureValue[] }> = ({ family, pets }) => {
+  const hasFamily = family?.some(f => f.value && f.confidence !== 'unknown');
+  const hasPets = pets?.some(p => p.value && p.confidence !== 'unknown');
+  
+  if (!hasFamily && !hasPets) return null;
+  
+  return (
+    <>
+      {hasFamily && <span className="fp-chip"><Baby className="w-3 h-3 text-slate-500" /> Family</span>}
+      {hasPets && <span className="fp-chip"><Dog className="w-3 h-3 text-slate-500" /> Pet Friendly</span>}
+    </>
+  );
+};
 
 interface PlaceCardProps {
   place: Place;
@@ -49,6 +64,7 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
           </div>
           <div className="flex flex-wrap gap-1 pt-1">
             <AccessibilityBadges accessibility={place.accessibility} />
+            <FacilityChips family={place.familyFacilities} pets={place.petFriendly} />
           </div>
         </div>
       </div>
@@ -58,7 +74,7 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
   return (
     <div
       onClick={onClick}
-      className="stitch-card-soft p-3.5 flex gap-3 cursor-pointer active:scale-[0.98] transition-transform relative overflow-hidden"
+      className="fp-card p-3.5 flex gap-3 cursor-pointer active:scale-[0.98] transition-transform relative overflow-hidden"
     >
       <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#0052FF]/[0.05]"></div>
       <div className="w-20 h-20 rounded-[20px] overflow-hidden shrink-0 bg-slate-100">
@@ -77,6 +93,7 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
         </div>
         <div className="flex flex-wrap gap-1 mt-1.5">
           <AccessibilityBadges accessibility={place.accessibility} />
+          <FacilityChips family={place.familyFacilities} pets={place.petFriendly} />
         </div>
       </div>
       <div className="flex flex-col justify-center gap-1 shrink-0">

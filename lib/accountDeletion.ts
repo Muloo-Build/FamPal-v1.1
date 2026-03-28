@@ -88,7 +88,7 @@ export function clearLocalAppState(): void {
     const toRemove: string[] = [];
     for (let i = 0; i < storage.length; i += 1) {
       const key = storage.key(i);
-      if (key && key.startsWith('fampals_')) {
+      if (key && key.startsWith('fampal_')) {
         toRemove.push(key);
       }
     }

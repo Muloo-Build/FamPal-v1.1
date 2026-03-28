@@ -1,14 +1,26 @@
-import {
-  db,
-  collection,
-  doc,
-  getDoc,
-  addDoc,
-  setDoc,
-  serverTimestamp,
-} from './firebase';
+import { auth } from './firebase';
 import type { PetFriendlyFeature, PetFriendlyFeatureValue } from '../src/types/place';
 import { PET_FRIENDLY_FEATURE_LABELS } from '../src/types/place';
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const currentUser = auth?.currentUser;
+  let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentUser) {
+    const token = await currentUser.getIdToken();
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...headers, ...(init?.headers || {}) },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text().catch(() => 'request_failed'));
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
 
 function generatePetFriendlySummary(features: PetFriendlyFeatureValue[]): string {
   const confirmed = features.filter((f) => f.value === true && f.confidence !== 'unknown');
@@ -49,22 +61,27 @@ export async function loadPlacePetFriendlyByIds(placeIds: string[]): Promise<{
   petFriendlyById: Record<string, PetFriendlyFeatureValue[]>;
   summaryById: Record<string, string>;
 }> {
-  if (!db || placeIds.length === 0) return { petFriendlyById: {}, summaryById: {} };
+  if (placeIds.length === 0) return { petFriendlyById: {}, summaryById: {} };
   const uniqueIds = [...new Set(placeIds.filter(Boolean))];
-  const snaps = await Promise.all(uniqueIds.map((placeId) => getDoc(doc(db, 'places', placeId))));
+  
   const petFriendlyById: Record<string, PetFriendlyFeatureValue[]> = {};
   const summaryById: Record<string, string> = {};
 
-  snaps.forEach((snap) => {
-    if (!snap.exists()) return;
-    const data = snap.data() as { petFriendly?: PetFriendlyFeatureValue[]; petFriendlySummary?: string };
-    const petFriendly = Array.isArray(data.petFriendly) ? data.petFriendly : [];
-    petFriendlyById[snap.id] = petFriendly;
-    summaryById[snap.id] =
-      typeof data.petFriendlySummary === 'string'
-        ? data.petFriendlySummary
-        : generatePetFriendlySummary(petFriendly);
-  });
+  await Promise.all(
+    uniqueIds.map(async (placeId) => {
+      try {
+        const data = await apiRequest<{ contributions: any[] }>(`/api/places/${placeId}/contributions?type=pet_friendly`);
+        const item = data.contributions[0];
+        const petFriendly = Array.isArray(item?.features) ? item.features : [];
+        petFriendlyById[placeId] = petFriendly;
+        summaryById[placeId] = item?.summary || generatePetFriendlySummary(petFriendly);
+      } catch (err) {
+        console.warn('Failed to load pet friendly via API', placeId, err);
+        petFriendlyById[placeId] = [];
+        summaryById[placeId] = '';
+      }
+    })
+  );
 
   return { petFriendlyById, summaryById };
 }
@@ -78,42 +95,26 @@ interface SubmitPetFriendlyReportInput {
 }
 
 export async function submitPetFriendlyReport(input: SubmitPetFriendlyReportInput): Promise<{ petFriendly: PetFriendlyFeatureValue[]; petFriendlySummary: string }> {
-  if (!db) throw new Error('Firestore not initialized');
+  try {
+    const payload = {
+      type: 'pet_friendly',
+      features: input.features,
+      summary: input.comment || '',
+    };
+    await apiRequest(`/api/places/${input.placeId}/contributions`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
 
-  const selections = input.features
-    .filter((item) => item.value === true)
-    .map((item) => ({
-      feature: item.feature as PetFriendlyFeature,
-      value: true as const,
-      confidence: item.confidence || ('reported' as const),
-      updatedAt: new Date().toISOString(),
-    }));
+    const normalized = input.features;
+    const summary = generatePetFriendlySummary(normalized);
 
-  if (selections.length === 0) return { petFriendly: [], petFriendlySummary: 'Pet-friendly info not yet confirmed.' };
+    import('./placeCache').then(m => m.markPlaceAsCommunityEnriched(input.placeId)).catch(() => {});
+    import('../src/services/gamification').then(m => { m.awardPoints('pet_friendly_report'); m.invalidateGamificationCache(); }).catch(() => {});
 
-  const placeRef = doc(db, 'places', input.placeId);
-  const currentPlace = await getDoc(placeRef);
-  const currentData = currentPlace.exists() ? (currentPlace.data() as { petFriendly?: PetFriendlyFeatureValue[] }) : {};
-
-  await addDoc(collection(db, 'places', input.placeId, 'petFriendlyReports'), {
-    userId: input.userId,
-    userDisplayName: input.userDisplayName || null,
-    selections,
-    comment: input.comment || null,
-    createdAt: serverTimestamp(),
-  });
-
-  const normalized = normalizePetFriendly(currentData.petFriendly || [], selections);
-  const summary = generatePetFriendlySummary(normalized);
-
-  await setDoc(placeRef, {
-    petFriendly: normalized,
-    petFriendlySummary: summary,
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
-
-  import('./placeCache').then(m => m.markPlaceAsCommunityEnriched(input.placeId)).catch(() => {});
-  import('../src/services/gamification').then(m => { m.awardPoints('pet_friendly_report'); m.invalidateGamificationCache(); }).catch(() => {});
-
-  return { petFriendly: normalized, petFriendlySummary: summary };
+    return { petFriendly: normalized, petFriendlySummary: summary };
+  } catch (err) {
+    console.error('Submit report failed', err);
+    throw err;
+  }
 }
