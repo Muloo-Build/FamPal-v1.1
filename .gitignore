@@ -34,3 +34,5 @@ android/.gradle/
 android/capacitor-cordova-android-plugins/build/
 android/capacitor-android/build/
 android/fampal-release.jks
+tmp-ast/
+.claude/
