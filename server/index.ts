@@ -4562,16 +4562,62 @@ app.post('/api/dev/grant-pro', requireAuth, async (req: AuthenticatedRequest, re
   }
 });
 
+// Gemini cache: <userID>:<model>:<contentsHash>
+const geminiCache = new Map<string, { expiresAt: number; response: { text: string; usageMetadata?: any } }>();
+const GEMINI_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const GEMINI_CACHE_MAX_ENTRIES = 1000;
+
+function hashContents(contents: any): string {
+  const str = JSON.stringify(contents);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
 app.post('/api/gemini/generate', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { model, contents, config } = req.body;
+    const { model, contents, config, useCache = true } = req.body;
     if (!model || !contents) return res.status(400).json({ error: 'model and contents are required' });
-    
+
     // Default to the original flash model, though typically the client passes the exact model
     const actualModel = model || 'gemini-1.5-flash';
+
+    // Generate cache key based on user, model, and contents hash
+    const contentsHash = hashContents(contents);
+    const cacheKey = `${req.uid}:${actualModel}:${contentsHash}`;
+
+    // Check cache if enabled
+    if (useCache) {
+      const cached = geminiCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.setHeader('X-Gemini-Cache', 'HIT');
+        return res.json({ ...cached.response, cached: true });
+      }
+    }
+
+    // Generate new response
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
     const response = await ai.models.generateContent({ model: actualModel, contents, config });
-    return res.json({ text: response.text, usageMetadata: response.usageMetadata });
+    const responseData = { text: response.text || '', usageMetadata: response.usageMetadata };
+
+    // Store in cache
+    if (useCache) {
+      geminiCache.set(cacheKey, { expiresAt: Date.now() + GEMINI_CACHE_TTL_MS, response: responseData });
+
+      // Clean up old entries if cache is too large
+      if (geminiCache.size > GEMINI_CACHE_MAX_ENTRIES) {
+        const oldest = geminiCache.entries().next().value;
+        if (oldest) geminiCache.delete(oldest[0]);
+      }
+
+      res.setHeader('X-Gemini-Cache', 'MISS');
+    }
+
+    return res.json({ ...responseData, cached: false });
   } catch (err: any) {
     console.error('[FamPal API] Gemini error:', err?.message || err);
     return res.status(500).json({ error: 'Failed to generate content' });

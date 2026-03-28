@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppState, PLAN_LIMITS, GOOGLE_PLAY_SUBSCRIPTION_URL } from '../types';
 import { canUseAI, getPlanDisplayName, isPaidTier } from '../lib/entitlements';
 import { getPlayProductIds, getPlayProducts, isPlayBillingAvailable, purchasePlaySubscription, syncPlayEntitlementWithServer } from '../lib/playBilling';
+import { PremiumWaitlist } from '../src/components/PremiumWaitlist';
 
 interface PlanBillingProps {
  state: AppState;
@@ -18,6 +19,7 @@ export default function PlanBilling({ state, onClose, onUpdateState }: PlanBilli
  const [isNativeBillingAvailable, setIsNativeBillingAvailable] = useState(false);
  const [productPrice, setProductPrice] = useState<string | null>(null);
  const [selectedProductId, setSelectedProductId] = useState<string>(getPlayProductIds()[0] || 'fampal_pro_monthly');
+ const [showWaitlist, setShowWaitlist] = useState(false);
  const [selectedOfferToken, setSelectedOfferToken] = useState<string | undefined>(undefined);
  const [busy, setBusy] = useState(false);
  const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -159,12 +161,12 @@ export default function PlanBilling({ state, onClose, onUpdateState }: PlanBilli
  <p className="mt-4 text-xs font-semibold text-emerald-700 ">Pro is active on this account.</p>
  ) : (
  <div className="mt-4 space-y-2">
+ {showWaitlist && <PremiumWaitlist onClose={() => setShowWaitlist(false)} />}
  <button
- onClick={handleUpgrade}
- disabled={busy}
- className="w-full py-3.5 bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-shadow active:scale-[0.98] disabled:opacity-60"
+ onClick={() => setShowWaitlist(true)}
+ className="w-full py-3.5 bg-[#0052ff] text-white rounded-full font-bold text-sm shadow-[0_4px_20px_rgba(0,82,255,0.28)] active:scale-[0.98] transition-all"
  >
- {busy ? 'Processing...' : `Go Pro${productPrice ? ` - ${productPrice}/month` : ''}`}
+ Join the Premium waitlist
  </button>
  <button
  onClick={() => syncEntitlement('Restore purchases')}

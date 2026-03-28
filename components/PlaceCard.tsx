@@ -1,6 +1,7 @@
 import React from 'react';
 import { Place, FamilyFacilityValue, PetFriendlyFeatureValue } from '../types';
 import AccessibilityBadges from '../src/components/AccessibilityBadges';
+import { VerifiedBadge } from '../src/components/VerifiedBadge';
 import { formatPriceLevel } from '../src/utils/priceLevel';
 import { Baby, Dog } from 'lucide-react';
 
@@ -82,7 +83,10 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
       </div>
       <div className="flex-1 min-w-0 flex flex-col justify-center py-1">
         <div className="flex items-center gap-1.5">
-          <h3 className="font-bold text-[15px] text-[#180052] truncate">{place.name}</h3>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h3 className="font-bold text-[15px] text-[#180052] truncate">{place.name}</h3>
+            {place.ownerStatus === 'verified' && <VerifiedBadge size="sm" />}
+          </div>
           {isVisited && <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" title="Visited" />}
           {hasNotes && <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
         </div>

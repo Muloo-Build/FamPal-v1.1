@@ -384,6 +384,24 @@ const GroupDetail: React.FC<GroupDetailProps> = ({
             </div>
           )}
         </div>
+
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex-1">
+              <h2 className="font-semibold text-slate-800">Location Sharing</h2>
+              <p className="text-xs text-slate-500 mt-1">Share your location with circle members</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                disabled
+                className="relative inline-flex items-center h-6 w-11 rounded-full bg-slate-200 cursor-not-allowed opacity-50"
+              >
+                <span className="inline-block h-4 w-4 transform rounded-full bg-white transition" style={{ marginLeft: '0.25rem' }} />
+              </button>
+              <span className="text-xs font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">Coming Soon</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -18,7 +18,19 @@ export async function initialisePushNotifications(): Promise<boolean> {
 
   try {
     // Dynamic import so web builds don't fail if plugin isn't installed
-    const { PushNotifications } = await import('@capacitor/push-notifications').catch(() => ({ PushNotifications: null }));
+    let PushNotifications: any = null;
+    try {
+      // @ts-ignore - Capacitor module may not be available in web builds
+      const module = await import('@capacitor/push-notifications');
+      PushNotifications = module.PushNotifications;
+    } catch (importErr) {
+      console.warn('[Push] @capacitor/push-notifications not available');
+      return false;
+    }
+
+    if (!PushNotifications) {
+      return false;
+    }
     if (!PushNotifications) {
       console.warn('[Push] @capacitor/push-notifications not installed');
       return false;

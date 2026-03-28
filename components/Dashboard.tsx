@@ -195,7 +195,40 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   
   // Hide saved places toggle - show fresh discoveries only
   const [hideSavedPlaces, setHideSavedPlaces] = useState(false);
-  
+
+  // Pull-to-refresh state
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const pullStartYRef = useRef(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Pull-to-refresh handler
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+    if (scrollTop === 0) {
+      pullStartYRef.current = e.touches[0].clientY;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+    if (scrollTop !== 0) return;
+
+    const currentY = e.touches[0].clientY;
+    const distance = Math.max(0, currentY - pullStartYRef.current);
+    setPullDistance(distance);
+    setIsPulling(distance > 80);
+  };
+
+  const handleTouchEnd = () => {
+    if (isPulling) {
+      setManualRefreshTrigger(prev => prev + 1);
+    }
+    setPullDistance(0);
+    setIsPulling(false);
+    pullStartYRef.current = 0;
+  };
+
   // Preference update callbacks - persist to database with debouncing
   const persistLocation = useCallback((lat: number, lng: number, label: string) => {
     const newPrefs = updateLocation({ lat, lng, label }, effectiveGuestForPersistence, userPrefs);
@@ -1704,8 +1737,40 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
           onOpenPlace={(place) => setSelectedPlace(place)}
         />
       ) : (
-        <div className="px-4 py-4">
-        <div className="mb-4 rounded-[2rem] bg-white/55 p-2 shadow-[0_14px_30px_rgba(24,0,82,0.05)]">
+        <div
+          ref={scrollContainerRef}
+          className="min-h-screen overflow-y-auto relative"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {pullDistance > 0 && (
+            <div
+              className="fixed top-0 left-0 right-0 flex items-center justify-center transition-all duration-300 ease-out pointer-events-none z-40"
+              style={{
+                height: `${Math.min(pullDistance, 80)}px`,
+                background: isPulling ? 'rgba(0, 82, 255, 0.05)' : 'transparent',
+              }}
+            >
+              {pullDistance >= 20 && (
+                <svg
+                  className={`w-6 h-6 text-[#0052ff] transition-transform duration-300 ${isPulling ? 'animate-spin' : ''}`}
+                  style={{
+                    transform: `rotate(${Math.min(pullDistance * 3, 360)}deg)`,
+                    opacity: Math.min(pullDistance / 80, 1),
+                  }}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                </svg>
+              )}
+            </div>
+          )}
+          <div className="px-4 py-4" style={{ paddingTop: `calc(1rem + ${Math.min(pullDistance, 80)}px)` }}>
+          <div className="mb-4 rounded-[2rem] bg-white/55 p-2 shadow-[0_14px_30px_rgba(24,0,82,0.05)]">
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 scroll-pl-4" style={{ scrollPaddingLeft: '1rem', scrollPaddingRight: '1rem' }}>
           <TabButton label="Explore" active={activeTab === 'explore'} onClick={() => handleTabChange('explore')} />
           <TabButton label="Saved" count={state.favorites.length} active={activeTab === 'favorites'} onClick={() => handleTabChange('favorites')} />
@@ -1842,7 +1907,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
                 ) : (
                   <EmptyState type="no-results" query={searchQuery} onClearFilters={() => {
                     setSearchQuery('');
-                    setActiveFilters({});
                   }} />
                 )}
               </div>
@@ -2471,6 +2535,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
             )}
           </div>
         )}
+        </div>
         </div>
       )}
 

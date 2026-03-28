@@ -27,9 +27,11 @@ interface ProfileProps {
   setView: (view: string) => void;
   onUpdateState: (key: keyof AppState, value: any) => void;
   onResetOnboarding?: () => void;
+  darkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }
 
-const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding }) => {
+const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding, darkMode, onToggleDarkMode }) => {
   const [childName, setChildName] = useState('');
   const [childAge, setChildAge] = useState('');
   const [showPreferences, setShowPreferences] = useState(false);
@@ -915,7 +917,22 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
               <span>→</span>
             </button>
           )}
-          <button 
+          {/* Dark mode toggle */}
+          {onToggleDarkMode && (
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 min-h-[52px]">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-500">Dark Mode</p>
+              </div>
+              <button
+                onClick={onToggleDarkMode}
+                aria-label="Toggle dark mode"
+                className={`w-11 h-6 rounded-full transition-all relative ${darkMode ? 'bg-[#0052ff]' : 'bg-slate-200'}`}
+              >
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${darkMode ? 'left-5' : 'left-0.5'}`} />
+              </button>
+            </div>
+          )}
+          <button
             onClick={onSignOut}
             className="w-full flex items-center justify-between p-6 text-slate-400 font-black text-xs uppercase tracking-widest hover:bg-rose-50 hover:text-rose-500 transition-colors min-h-[52px]"
           >
