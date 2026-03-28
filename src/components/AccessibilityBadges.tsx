@@ -4,6 +4,7 @@ import { ACCESSIBILITY_FEATURE_LABELS } from '../types/place';
 
 interface AccessibilityBadgesProps {
   accessibility?: AccessibilityFeatureValue[];
+  noConfirmedFallbackClass?: string;
 }
 
 const PRIORITY_FEATURES: AccessibilityFeature[] = [
@@ -15,10 +16,12 @@ const PRIORITY_FEATURES: AccessibilityFeature[] = [
   'lift_available',
 ];
 
-const AccessibilityBadges: React.FC<AccessibilityBadgesProps> = ({ accessibility }) => {
+const AccessibilityBadges: React.FC<AccessibilityBadgesProps> = ({ accessibility, noConfirmedFallbackClass }) => {
+  const fallbackClass = noConfirmedFallbackClass ?? 'px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500';
+
   if (!accessibility || accessibility.length === 0) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">
+      <span className={fallbackClass}>
         no confirmed accessibility info yet
       </span>
     );
@@ -30,7 +33,7 @@ const AccessibilityBadges: React.FC<AccessibilityBadgesProps> = ({ accessibility
 
   if (trueFeatures.length === 0) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">
+      <span className={fallbackClass}>
         no confirmed accessibility info yet
       </span>
     );

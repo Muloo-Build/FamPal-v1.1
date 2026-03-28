@@ -418,6 +418,22 @@ try {
   process.exit(1);
 }
 
+// Convert a raw Google Places photo URL to our server-side proxy URL.
+// This keeps API keys server-side and avoids CORS issues in the browser.
+function toProxyPhotoUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null;
+  // Already a proxy or relative URL — leave as-is
+  if (rawUrl.startsWith('/api/')) return rawUrl;
+  // New Places API v1: https://places.googleapis.com/v1/places/XYZ/photos/ABC/media?...
+  const v1Match = rawUrl.match(/places\.googleapis\.com\/v1\/(places\/[^/]+\/photos\/[^/]+)\/media/);
+  if (v1Match) return `/api/places/photo?photoName=${encodeURIComponent(v1Match[1])}`;
+  // Legacy photo reference: key=...&photo_reference=REF or photo_reference=REF
+  const refMatch = rawUrl.match(/photo_reference=([^&]+)/);
+  if (refMatch) return `/api/places/photo?photoReference=${encodeURIComponent(refMatch[1])}`;
+  // Unknown format — return as-is and let the browser try
+  return rawUrl;
+}
+
 function parsePgJson<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined) return fallback;
   if (typeof value === 'string') {
@@ -749,7 +765,7 @@ function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> 
     placeId: row.place_id,
     name: payload.name || row.place_name || 'Saved place',
     address: payload.address || row.formatted_address || '',
-    imageUrl: payload.imageUrl || placeRaw.photoUrl || null,
+    imageUrl: toProxyPhotoUrl(payload.imageUrl || placeRaw.photoUrl || null),
     mapsUrl: payload.mapsUrl || placeRaw.mapsUrl || placeRaw.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${row.place_id}`,
     rating: payload.rating ?? row.rating ?? placeRaw.rating,
     priceLevel: payload.priceLevel || placeRaw.priceLevel,
@@ -2098,9 +2114,10 @@ async function runPlaceRefreshJob(options: PlaceRefreshOptions = {}) {
         }, { merge: true });
 
         const p = await fetchGooglePlaceForRefresh(googlePlaceId);
-        const imageUrl = p.photos?.[0]
+        const rawPhotoUrl = p.photos?.[0]
           ? `https://places.googleapis.com/v1/${p.photos[0].name}/media?maxHeightPx=400&maxWidthPx=600&key=${GOOGLE_PLACES_API_KEY}`
           : null;
+        const imageUrl = toProxyPhotoUrl(rawPhotoUrl);
         const source = {
           googlePlaceId: p.id || googlePlaceId,
           name: p.displayName?.text || next.data.name || 'Unknown Place',
@@ -2164,7 +2181,7 @@ async function runPlaceRefreshJob(options: PlaceRefreshOptions = {}) {
           userRatingsTotal: source.userRatingsTotal,
           priceLevel: source.priceLevel,
           mapsUrl: source.mapsUrl,
-          imageUrl: source.photoUrl,
+          imageUrl: toProxyPhotoUrl(source.photoUrl),
           types: source.types,
           primaryType: source.primaryType,
           facets: {

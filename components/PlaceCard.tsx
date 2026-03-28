@@ -1,7 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Place, FamilyFacilityValue, PetFriendlyFeatureValue } from '../types';
 import AccessibilityBadges from '../src/components/AccessibilityBadges';
-import { VerifiedBadge } from '../src/components/VerifiedBadge';
 import { formatPriceLevel } from '../src/utils/priceLevel';
 import { Baby, Dog } from 'lucide-react';
 
@@ -32,6 +31,8 @@ interface PlaceCardProps {
 }
 
 const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onToggleFavorite, onClick, onAddToGroup, showAddToGroup, hasNotes, isVisited }) => {
+  const [imgError, setImgError] = useState(false);
+
   if (variant === 'hero') {
     return (
       <div
@@ -75,18 +76,26 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
   return (
     <div
       onClick={onClick}
-      className="fp-card p-3.5 flex gap-3 cursor-pointer active:scale-[0.98] transition-transform relative overflow-hidden"
+      className="fp-card p-4 flex gap-3.5 cursor-pointer active:scale-[0.98] transition-transform relative overflow-hidden"
     >
       <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#0052FF]/[0.05]"></div>
       <div className="w-20 h-20 rounded-[20px] overflow-hidden shrink-0 bg-slate-100">
-        <img src={place.imageUrl} alt="" className="w-full h-full object-cover" />
+        {imgError || !place.imageUrl ? (
+          <div className="w-full h-full bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center">
+            <span className="text-[#0052FF] text-2xl font-black">{place.name?.[0] ?? '?'}</span>
+          </div>
+        ) : (
+          <img
+            src={place.imageUrl}
+            alt=""
+            className="w-full h-full object-cover"
+            onError={() => setImgError(true)}
+          />
+        )}
       </div>
       <div className="flex-1 min-w-0 flex flex-col justify-center py-1">
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <h3 className="font-bold text-[15px] text-[#180052] truncate">{place.name}</h3>
-            {place.ownerStatus === 'verified' && <VerifiedBadge size="sm" />}
-          </div>
+          <h3 className="font-bold text-[15px] text-[#180052] truncate">{place.name}</h3>
           {isVisited && <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" title="Visited" />}
           {hasNotes && <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
         </div>
@@ -96,7 +105,7 @@ const PlaceCard: React.FC<PlaceCardProps> = ({ place, variant, isFavorite, onTog
           <span className="text-slate-300 text-xs">{formatPriceLevel(place.priceLevel)}</span>
         </div>
         <div className="flex flex-wrap gap-1 mt-1.5">
-          <AccessibilityBadges accessibility={place.accessibility} />
+          <AccessibilityBadges accessibility={place.accessibility} noConfirmedFallbackClass="text-[10px] text-slate-300 italic" />
           <FacilityChips family={place.familyFacilities} pets={place.petFriendly} />
         </div>
       </div>

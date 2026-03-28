@@ -1727,22 +1727,15 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
             <div className="flex items-center gap-2 mt-3">
               <button
                 onClick={() => setShowFilterPanel(true)}
-                className="stitch-card-soft flex-1 h-11 flex items-center gap-2 px-4 text-sm font-semibold text-slate-700 active:bg-slate-50"
+                className="stitch-card-soft h-11 w-11 flex items-center justify-center text-slate-600 active:bg-slate-50 relative shrink-0"
+                aria-label="Open filters"
               >
-                <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>
-                <span>Filters</span>
+                <svg className="w-5 h-5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>
                 {(prefFilterMode !== 'all' || hideSavedPlaces || selectedLensChipItems.length > 0 || radiusKm !== 10) && (
-                  <span className="ml-auto flex items-center justify-center w-5 h-5 rounded-full bg-[#ff8c00] text-white text-[10px] font-bold">
+                  <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-[#ff8c00] text-white text-[9px] font-bold">
                     {[prefFilterMode !== 'all', hideSavedPlaces, selectedLensChipItems.length > 0, radiusKm !== 10].filter(Boolean).length}
                   </span>
                 )}
-              </button>
-              <button
-                onClick={() => setManualRefreshTrigger(prev => prev + 1)}
-                className="stitch-pill-button h-11 px-4 text-sm font-bold flex items-center gap-2 min-w-[100px] justify-center"
-              >
-                <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>
-                Refresh
               </button>
             </div>
 
