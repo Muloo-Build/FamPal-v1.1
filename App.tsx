@@ -192,28 +192,23 @@ const App: React.FC = () => {
     setLoading(true);
     try {
       await authPersistenceReady;
-      authDebugLog('Google sign-in start', { flow: 'redirect' });
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem(AUTH_REDIRECT_PENDING_KEY, '1');
-      }
-      await signInWithRedirect(auth, googleProvider);
-      return;
-    } catch (redirectErr: any) {
-      authDebugLog('Redirect sign-in failed', { code: redirectErr?.code, message: redirectErr?.message });
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.removeItem(AUTH_REDIRECT_PENDING_KEY);
-      }
-      if (redirectErr?.code === 'auth/cancelled-popup-request' || redirectErr?.code === 'auth/redirect-cancelled-by-user') {
+      authDebugLog('Google sign-in start', { flow: 'popup' });
+      await signInWithPopup(auth, googleProvider);
+      setView('dashboard');
+      navigate('/', { replace: true });
+    } catch (popupErr: any) {
+      authDebugLog('Popup sign-in failed', { code: popupErr?.code, message: popupErr?.message });
+      if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/cancelled-popup-request') {
         setError(null);
         setLoading(false);
         return;
       }
-      if (redirectErr?.code === 'auth/unauthorized-domain') {
+      if (popupErr?.code === 'auth/unauthorized-domain') {
         setError("This domain is not authorized for Google Sign-In. Please add it to Firebase Console -> Authentication -> Settings -> Authorized domains.");
         setLoading(false);
         return;
       }
-      setError(`Login failed: ${redirectErr?.message || 'Unknown error'}`);
+      setError(`Login failed: ${popupErr?.message || 'Unknown error'}`);
       setLoading(false);
     }
   }, [authBypassEnabled]);
