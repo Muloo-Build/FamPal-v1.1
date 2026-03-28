@@ -129,16 +129,21 @@ function createPollingSubscription<T>(
 ): Unsubscribe {
   let active = true;
   let pollTimer: number | null = null;
+  let hasSucceeded = false;
 
   const load = async () => {
     try {
       const data = await loader();
       if (!active) return;
+      hasSucceeded = true;
       onData(data);
     } catch (err) {
       console.error('userData sync failed', err);
       if (!active) return;
-      onData(onErrorValue);
+      // Only emit error value on the first load — subsequent failures keep existing state
+      if (!hasSucceeded) {
+        onData(onErrorValue);
+      }
     }
   };
 
