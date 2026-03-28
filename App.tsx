@@ -111,6 +111,7 @@ const App: React.FC = () => {
     photoURL: null,
   };
   const bypassInitializedRef = useRef(false);
+  const onboardingJustCompletedRef = useRef(false);
   const [state, setState] = useState<AppState>(() => getInitialState(null));
   const [isGuest, setIsGuest] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -522,7 +523,7 @@ const App: React.FC = () => {
               };
             });
             setLoading(false);
-            if (!onboardingCompleted) {
+            if (!onboardingCompleted && !onboardingJustCompletedRef.current) {
               authDebugLog('Routing to onboarding', { reason: 'onboarding_incomplete' });
               setView('onboarding');
             } else {
@@ -533,7 +534,6 @@ const App: React.FC = () => {
             authDebugLog('User doc missing, defaulting to onboarding and creating profile doc');
             legacyFavoritesRef.current = [];
             savedPlacesMigratedAtRef.current = null;
-            setNeedsOnboarding(true);
             setOnboardingChecked(true);
             setState(prev => ({
               ...initialState,
@@ -543,7 +543,10 @@ const App: React.FC = () => {
               familyPool: prev.familyPool,
             }));
             setLoading(false);
-            setView('onboarding');
+            if (!onboardingJustCompletedRef.current) {
+              setNeedsOnboarding(true);
+              setView('onboarding');
+            }
           }
         });
       } else {
@@ -579,6 +582,8 @@ const App: React.FC = () => {
 
   const handleOnboardingComplete = useCallback(async (result: OnboardingResult) => {
     const uid = state.user?.uid || auth?.currentUser?.uid;
+    // Set ref immediately so Firestore listener won't loop back to onboarding
+    onboardingJustCompletedRef.current = true;
     if (!uid) {
       setNeedsOnboarding(false);
       setView('dashboard');
