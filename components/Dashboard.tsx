@@ -69,7 +69,7 @@ interface DashboardProps {
   onUpdateState: (key: keyof AppState, value: any) => void;
   initialCircleId?: string | null;
   onClearInitialCircle?: () => void;
-  initialTab?: 'explore' | 'favorites' | 'activity' | 'memories' | 'circles' | 'partner';
+  initialTab?: 'explore' | 'favorites' | 'circles';
   onTabChange?: (tab: string) => void;
   discoveryMode?: boolean;
   onToggleDiscoveryMode?: () => void;
@@ -85,13 +85,11 @@ interface PartnerNote {
 
 type TabButtonProps = { label: string; count?: number; active: boolean; onClick: () => void };
 const TabButton: React.FC<TabButtonProps> = ({ label, count, active, onClick }) => (
-  <button
+  <button 
     onClick={onClick}
     aria-label={`${label}${count !== undefined && count > 0 ? `, ${count} items` : ''}`}
-    className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shrink-0 min-h-[44px] ${
-      active
-        ? 'bg-[#0052ff] text-white shadow-[0_4px_16px_rgba(0,82,255,0.28)]'
-        : 'bg-white/70 text-[#58708f] border border-[rgba(24,0,82,0.06)]'
+    className={`px-4 py-2.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 min-h-[44px] ${
+      active ? 'stitch-chip-active text-[#b35b00]' : 'stitch-chip'
     }`}
   >
     {label}{count !== undefined && count > 0 ? ` (${count})` : ''}
@@ -119,7 +117,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   const canSyncCloud = accessContext?.canSyncCloud ?? !isGuest;
   const effectiveGuestForPersistence = !canSyncCloud;
   const userPrefs = state.userPreferences || {};
-  const [activeTab, setActiveTab] = useState<'explore' | 'favorites' | 'activity' | 'memories' | 'circles' | 'partner'>(initialTab || 'explore');
+  const [activeTab, setActiveTab] = useState<'explore' | 'favorites' | 'circles'>(initialTab || 'explore');
   
   React.useEffect(() => {
     if (initialTab && initialTab !== activeTab) {
@@ -127,7 +125,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
     }
   }, [initialTab]);
   
-  const handleTabChange = (tab: 'explore' | 'favorites' | 'activity' | 'memories' | 'circles' | 'partner') => {
+  const handleTabChange = (tab: 'explore' | 'favorites' | 'circles') => {
     setActiveTab(tab);
     onTabChange?.(tab);
   };
@@ -197,40 +195,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
   
   // Hide saved places toggle - show fresh discoveries only
   const [hideSavedPlaces, setHideSavedPlaces] = useState(false);
-
-  // Pull-to-refresh state
-  const [pullDistance, setPullDistance] = useState(0);
-  const [isPulling, setIsPulling] = useState(false);
-  const pullStartYRef = useRef(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-  // Pull-to-refresh handler
-  const handleTouchStart = (e: React.TouchEvent) => {
-    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
-    if (scrollTop === 0) {
-      pullStartYRef.current = e.touches[0].clientY;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
-    if (scrollTop !== 0) return;
-
-    const currentY = e.touches[0].clientY;
-    const distance = Math.max(0, currentY - pullStartYRef.current);
-    setPullDistance(distance);
-    setIsPulling(distance > 80);
-  };
-
-  const handleTouchEnd = () => {
-    if (isPulling) {
-      setManualRefreshTrigger(prev => prev + 1);
-    }
-    setPullDistance(0);
-    setIsPulling(false);
-    pullStartYRef.current = 0;
-  };
-
+  
   // Preference update callbacks - persist to database with debouncing
   const persistLocation = useCallback((lat: number, lng: number, label: string) => {
     const newPrefs = updateLocation({ lat, lng, label }, effectiveGuestForPersistence, userPrefs);
@@ -1739,40 +1704,8 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
           onOpenPlace={(place) => setSelectedPlace(place)}
         />
       ) : (
-        <div
-          ref={scrollContainerRef}
-          className="min-h-screen overflow-y-auto relative"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
-          {pullDistance > 0 && (
-            <div
-              className="fixed top-0 left-0 right-0 flex items-center justify-center transition-all duration-300 ease-out pointer-events-none z-40"
-              style={{
-                height: `${Math.min(pullDistance, 80)}px`,
-                background: isPulling ? 'rgba(0, 82, 255, 0.05)' : 'transparent',
-              }}
-            >
-              {pullDistance >= 20 && (
-                <svg
-                  className={`w-6 h-6 text-[#0052ff] transition-transform duration-300 ${isPulling ? 'animate-spin' : ''}`}
-                  style={{
-                    transform: `rotate(${Math.min(pullDistance * 3, 360)}deg)`,
-                    opacity: Math.min(pullDistance / 80, 1),
-                  }}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <polyline points="23 4 23 10 17 10" />
-                  <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
-                </svg>
-              )}
-            </div>
-          )}
-          <div className="px-4 py-4" style={{ paddingTop: `calc(1rem + ${Math.min(pullDistance, 80)}px)` }}>
-          <div className="mb-4 rounded-[2rem] bg-white/55 p-2 shadow-[0_14px_30px_rgba(24,0,82,0.05)]">
+        <div className="px-4 py-4">
+        <div className="mb-4 rounded-[2rem] bg-white/55 p-2 shadow-[0_14px_30px_rgba(24,0,82,0.05)]">
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 scroll-pl-4" style={{ scrollPaddingLeft: '1rem', scrollPaddingRight: '1rem' }}>
           <TabButton label="Explore" active={activeTab === 'explore'} onClick={() => handleTabChange('explore')} />
           <TabButton label="Saved" count={state.favorites.length} active={activeTab === 'favorites'} onClick={() => handleTabChange('favorites')} />
@@ -1906,6 +1839,7 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
                 ) : (
                   <EmptyState type="no-results" query={searchQuery} onClearFilters={() => {
                     setSearchQuery('');
+                    setActiveFilters({});
                   }} />
                 )}
               </div>
@@ -1970,28 +1904,173 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
         )}
 
         {activeTab === 'favorites' && (
-          <div className="space-y-4 mt-4">
-            {favoritePlaces.length > 0 ? (
-              favoritePlaces.map(place => {
-                const details = state.favoriteDetails[place.id];
-                return (
-                  <PlaceCard 
-                    key={place.id} 
-                    place={place}
-                    variant="list"
-                    isFavorite={true}
-                    onToggleFavorite={() => toggleFavorite(place)}
-                    onClick={() => setSelectedPlace(place)}
-                    showAddToGroup={canSyncCloud && circles.length > 0}
-                    onAddToGroup={() => setAddToCirclePlace(place)}
-                    hasNotes={!!details?.notes}
-                    isVisited={!!details?.visited}
-                  />
-                );
-              })
+          <div className="mt-4">
+            {/* Collections Header */}
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-black text-[#1E293B]">My Collections</h2>
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0052FF] text-white text-xs font-bold shadow-md active:scale-95 transition-all">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                New Collection
+              </button>
+            </div>
+
+            {/* Search bar */}
+            <div className="relative mb-5">
+              <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+              <input
+                type="text"
+                placeholder="Search saved spots..."
+                className="w-full h-11 pl-10 pr-4 rounded-2xl bg-white border border-slate-200 text-sm font-medium placeholder-slate-400 focus:outline-none focus:border-[#0052FF] focus:ring-2 focus:ring-[#0052FF]/10"
+              />
+            </div>
+
+            {favoritePlaces.length === 0 ? (
+              <div className="py-24 text-center">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+                </div>
+                <p className="text-slate-400 font-bold text-sm">No saved spots yet.</p>
+                <p className="text-slate-300 text-xs mt-1">Explore and save places to build your collections.</p>
+              </div>
             ) : (
-              <div className="py-24 text-center text-slate-300 font-black text-xs uppercase tracking-widest bg-white rounded-[40px] border border-slate-50">
-                No saved spots yet.
+              <div className="space-y-4">
+                {/* Main bento grid - first 6 places */}
+                {favoritePlaces.length >= 2 && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Left large hero card (col-span-2) */}
+                    <div className="col-span-2">
+                      <div
+                        className="relative rounded-2xl overflow-hidden bg-slate-200 cursor-pointer active:scale-[0.98] transition-all"
+                        style={{ aspectRatio: '4/3' }}
+                        onClick={() => setSelectedPlace(favoritePlaces[0])}
+                      >
+                        <img
+                          src={favoritePlaces[0].imageUrl || 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=400&h=300&fit=crop'}
+                          alt={favoritePlaces[0].name}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(favoritePlaces[0]); }}
+                          className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-md"
+                        >
+                          <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
+                        </button>
+                        <div className="absolute bottom-0 left-0 right-0 p-3">
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {(favoritePlaces[0].tags || []).slice(0, 2).map((tag, i) => (
+                              <span key={i} className="text-[9px] font-black uppercase tracking-wider bg-white/20 text-white px-1.5 py-0.5 rounded-full backdrop-blur-sm">{tag}</span>
+                            ))}
+                          </div>
+                          <p className="text-white font-bold text-sm leading-tight">{favoritePlaces[0].name}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {favoritePlaces[0].distance && <span className="text-white/70 text-[10px]">{favoritePlaces[0].distance}</span>}
+                            {favoritePlaces[0].rating > 0 && (
+                              <span className="flex items-center gap-0.5 text-white/70 text-[10px]">
+                                <svg className="w-2.5 h-2.5 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>
+                                {favoritePlaces[0].rating.toFixed(1)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right column - up to 2 smaller cards */}
+                    <div className="col-span-1 flex flex-col gap-3">
+                      {favoritePlaces.slice(1, 3).map((place) => (
+                        <div
+                          key={place.id}
+                          className="relative rounded-xl overflow-hidden bg-slate-200 cursor-pointer active:scale-[0.98] transition-all flex-1"
+                          style={{ minHeight: '80px' }}
+                          onClick={() => setSelectedPlace(place)}
+                        >
+                          <img
+                            src={place.imageUrl || 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=200&h=150&fit=crop'}
+                            alt={place.name}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleFavorite(place); }}
+                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 flex items-center justify-center shadow"
+                          >
+                            <svg className="w-3 h-3 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
+                          </button>
+                          <div className="absolute bottom-0 left-0 right-0 p-2">
+                            <p className="text-white font-bold text-[10px] leading-tight line-clamp-2">{place.name}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Horizontal scroll row for remaining places */}
+                {favoritePlaces.length > 3 && (
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">More Saved Spots</p>
+                    <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                      {favoritePlaces.slice(3).map((place) => (
+                        <div
+                          key={place.id}
+                          className="relative rounded-xl overflow-hidden bg-slate-200 cursor-pointer active:scale-[0.98] transition-all shrink-0"
+                          style={{ width: '140px', height: '105px' }}
+                          onClick={() => setSelectedPlace(place)}
+                        >
+                          <img
+                            src={place.imageUrl || 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=200&h=150&fit=crop'}
+                            alt={place.name}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleFavorite(place); }}
+                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 flex items-center justify-center shadow"
+                          >
+                            <svg className="w-3 h-3 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
+                          </button>
+                          <div className="absolute bottom-0 left-0 right-0 p-2">
+                            <p className="text-white font-bold text-[10px] leading-tight line-clamp-2">{place.name}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {/* Add Spot empty state card */}
+                      <div className="relative rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 cursor-pointer active:scale-[0.98] transition-all shrink-0 flex flex-col items-center justify-center gap-1"
+                        style={{ width: '140px', height: '105px' }}
+                        onClick={() => handleTabChange('explore')}
+                      >
+                        <svg className="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                        <span className="text-[10px] font-bold text-slate-400">Add Spot</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Single place case */}
+                {favoritePlaces.length === 1 && (
+                  <div
+                    className="relative rounded-2xl overflow-hidden bg-slate-200 cursor-pointer active:scale-[0.98] transition-all"
+                    style={{ height: '200px' }}
+                    onClick={() => setSelectedPlace(favoritePlaces[0])}
+                  >
+                    <img
+                      src={favoritePlaces[0].imageUrl || 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=400&h=250&fit=crop'}
+                      alt={favoritePlaces[0].name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleFavorite(favoritePlaces[0]); }}
+                      className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-md"
+                    >
+                      <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 p-4">
+                      <p className="text-white font-bold text-base">{favoritePlaces[0].name}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2048,40 +2127,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
           </div>
         )}
 
-        {activeTab === 'activity' && (
-          <ActivityDashboard
-            isGuest={isGuest}
-            visitedPlaces={state.visitedPlaces || []}
-            memories={state.memories}
-            savedPlaces={savedPlaces}
-            userId={state.user?.uid}
-            onOpenPlace={(visit) => {
-              const existingPlace = savedPlaces.find(sp => sp.placeId === visit.placeId);
-              if (existingPlace) {
-                setSelectedPlace(mapSavedPlaceToPlace(existingPlace));
-              } else {
-                const fallbackImage = visit.imageUrl || 'https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?w=200&h=200&fit=crop';
-                const placeFromVisit: Place = {
-                  id: visit.placeId,
-                  name: visit.placeName,
-                  type: visit.placeType || 'all',
-                  tags: [visit.placeType || 'Family'],
-                  rating: 0,
-                  address: '',
-                  description: '',
-                  priceLevel: undefined,
-                  distance: '',
-                  ageAppropriate: '',
-                  imageUrl: fallbackImage,
-                  mapsUrl: `https://www.google.com/maps/place/?q=place_id:${visit.placeId}`,
-                };
-                setSelectedPlace(placeFromVisit);
-              }
-            }}
-            onGoToExplore={() => setActiveTab('explore')}
-          />
-        )}
-
         {activeTab === 'circles' && (
           <GroupsList
             circles={regularCircles}
@@ -2094,447 +2139,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
             maxCircles={limits.circles}
           />
         )}
-
-        {activeTab === 'memories' && (
-          isGuest ? (
-            <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-              <div className="w-20 h-20 bg-sky-100 rounded-full flex items-center justify-center mb-4">
-                <svg className="w-10 h-10 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-slate-800 mb-2">Sign in to save memories</h3>
-              <p className="text-sm text-slate-500 max-w-xs">
-                Create an account to save photos and memories from your family adventures.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4 mt-4">
-              <MemoryCreate
-                entitlement={state.entitlement}
-                currentCount={state.memories.length}
-                places={places}
-                favoritePlaces={favoritePlaces}
-                onCreate={handleAddMemory}
-                onUpgradePrompt={() => setShowUpgradePrompt('memories')}
-                enablePartnerShare={hasLinkedPartner}
-                circleOptions={circles.map(circle => ({ id: circle.id, name: circle.name }))}
-                onTagCircle={handleTagMemoryToCircle}
-                title="Add a Memory"
-                toggleLabels={{ closed: 'Add Memory', open: 'Cancel' }}
-                showToggle={true}
-              />
-
-              <div className="space-y-4">
-                {[...state.memories]
-                  .sort((a, b) => {
-                    const dateA = a.date ? new Date(a.date).getTime() : 0;
-                    const dateB = b.date ? new Date(b.date).getTime() : 0;
-                    return dateB - dateA;
-                  })
-                  .map(memory => {
-                  const photos = memory.photoThumbUrls || memory.photoUrls || (memory.photoThumbUrl ? [memory.photoThumbUrl] : (memory.photoUrl ? [memory.photoUrl] : []));
-                  const memoryDate = memory.date ? new Date(memory.date) : null;
-                  const timeAgo = memoryDate && !isNaN(memoryDate.getTime()) ? getTimeAgo(memoryDate) : 'Recently';
-                  const dateForInput = memoryDate && !isNaN(memoryDate.getTime())
-                    ? memoryDate.toISOString().split('T')[0]
-                    : '';
-                  
-                  return (
-                    <div key={memory.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                      <div className="flex items-center gap-3 p-4 pb-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-sky-400 to-sky-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                          {state.user?.displayName?.charAt(0)?.toUpperCase() || 'U'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-slate-800 text-sm truncate">
-                            {state.user?.displayName || 'You'}
-                          </p>
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-slate-400">{timeAgo}</span>
-                            <span className="text-slate-300 text-xs">·</span>
-                            <label className="relative inline-flex items-center cursor-pointer group">
-                              <input
-                                type="date"
-                                value={dateForInput}
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    const newDate = new Date(e.target.value + 'T12:00:00').toISOString();
-                                    const updated = state.memories.map(m =>
-                                      m.id === memory.id ? { ...m, date: newDate } : m
-                                    );
-                                    onUpdateState('memories', updated);
-                                  }
-                                }}
-                                className="absolute inset-0 opacity-0 w-full cursor-pointer"
-                              />
-                              <span className="text-[11px] text-sky-500 font-medium group-active:text-sky-700">
-                                {memoryDate && !isNaN(memoryDate.getTime())
-                                  ? memoryDate.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
-                                  : 'Set date'}
-                              </span>
-                              <svg className="w-3 h-3 ml-0.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                              </svg>
-                            </label>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (window.confirm('Delete this memory?')) {
-                              const updated = state.memories.filter(m => m.id !== memory.id);
-                              onUpdateState('memories', updated);
-                            }
-                          }}
-                          className="text-slate-300 hover:text-slate-500 p-1"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                      
-                      <div className="px-4 pb-3">
-                        <p className="text-slate-800 text-sm leading-relaxed">{memory.caption}</p>
-                      </div>
-                      
-                      {photos.length > 0 ? (
-                        <div className={`${photos.length === 1 ? '' : 'grid grid-cols-2 gap-0.5'}`}>
-                          {photos.slice(0, 4).map((photo, idx) => (
-                            <div key={idx} className={`relative ${photos.length === 1 ? 'aspect-video' : 'aspect-square'} bg-slate-100`}>
-                              <img
-                                src={photo}
-                                className="w-full h-full object-cover"
-                                alt=""
-                                onError={(e) => {
-                                  const target = e.currentTarget;
-                                  if (!target.dataset.retried) {
-                                    target.dataset.retried = 'true';
-                                    target.src = photo + (photo.includes('?') ? '&' : '?') + 't=' + Date.now();
-                                  } else {
-                                    target.style.display = 'none';
-                                    const parent = target.parentElement;
-                                    if (parent && !parent.querySelector('.photo-fallback')) {
-                                      const fallback = document.createElement('div');
-                                      fallback.className = 'photo-fallback absolute inset-0 flex items-center justify-center bg-slate-100';
-                                      fallback.innerHTML = '<svg class="w-8 h-8 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>';
-                                      parent.appendChild(fallback);
-                                    }
-                                  }
-                                }}
-                              />
-                              {idx === 3 && photos.length > 4 && (
-                                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                                  <span className="text-white font-bold text-lg">+{photos.length - 4}</span>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      
-                      {memory.placeName && (
-                        <div className="px-4 py-3 flex items-center gap-2 border-t border-slate-100">
-                          <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                          </svg>
-                          <span className="text-xs font-medium text-slate-600">{memory.placeName}</span>
-                        </div>
-                      )}
-                      
-                      <div className="flex border-t border-slate-100">
-                        <button
-                          onClick={() => setShareMemory(memory)}
-                          className="flex-1 flex items-center justify-center gap-2 py-3 text-slate-500 hover:bg-slate-50 transition-colors"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                          </svg>
-                          <span className="text-sm font-medium">Share</span>
-                        </button>
-                        <div className="w-px bg-slate-100"></div>
-                        <button
-                          onClick={() => handleShareMemoryExternal(memory)}
-                          className="flex-1 flex items-center justify-center gap-2 py-3 text-slate-500 hover:bg-slate-50 transition-colors"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                          <span className="text-sm font-medium">Share</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )
-        )}
-
-        {activeTab === 'partner' && (
-          <div className="space-y-6">
-            {hasLinkedPartner ? (
-              <div className="bg-gradient-to-br from-pink-50 to-rose-50 rounded-3xl p-6 border border-rose-100">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center text-2xl shadow-sm overflow-hidden">
-                    {partnerPhotoURL ? (
-                      <img src={partnerPhotoURL} alt={partnerLabel} className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-base font-black text-rose-500">{partnerInitial}</span>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="font-black text-lg text-slate-800">{partnerLabel}</h3>
-                    {partnerEmail && (
-                      <p className="text-xs text-slate-500">{partnerEmail}</p>
-                    )}
-                    <p className="text-xs text-slate-500">Linked {state.partnerLink?.linkedAt ? new Date(state.partnerLink.linkedAt).toLocaleDateString() : ''}</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="bg-gradient-to-br from-rose-50 to-pink-50 rounded-3xl p-6 border border-rose-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-white text-2xl flex items-center justify-center shadow-sm"><svg className="w-6 h-6 text-rose-400" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg></div>
-                    <div>
-                      <h3 className="font-black text-lg text-slate-800">Partner Space</h3>
-                      <p className="text-xs text-slate-500">Share favorites, memories, and quick notes together.</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-3xl p-6 border border-slate-100 space-y-3">
-                  {isPartnerPending ? (
-                    <>
-                      <p className="text-sm font-semibold text-slate-700">Invite sent</p>
-                      <p className="text-xs text-slate-500">Your partner hasn’t accepted yet. You can view or resend your invite code in Profile.</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-semibold text-slate-700">Link your partner</p>
-                      <p className="text-xs text-slate-500">Connect accounts to share places, notes, and partner circles.</p>
-                    </>
-                  )}
-
-                  {isGuest ? (
-                    <button
-                      onClick={() => setView('login')}
-                      className="w-full px-4 py-3 bg-rose-500 text-white rounded-2xl text-sm font-bold"
-                    >
-                      Sign in to link partner
-                    </button>
-                  ) : !canLinkPartner ? (
-                    <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100">
-                      <p className="text-xs font-semibold text-amber-700">Partner linking is a Pro feature.</p>
-                      <button
-                        onClick={() => setShowPlanBilling(true)}
-                        className="mt-3 px-4 py-2 bg-amber-500 text-white rounded-xl text-xs font-bold"
-                      >
-                        Upgrade to Pro
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setView('profile')}
-                      className="w-full px-4 py-3 bg-rose-500 text-white rounded-2xl text-sm font-bold"
-                    >
-                      Link partner
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {hasLinkedPartner && (
-              <>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Shared Favorites</h4>
-                    {!isPaid && state.partnerSharedPlaces.length > 3 && (
-                      <span className="text-[9px] font-bold text-amber-500">Free: 3 of {state.partnerSharedPlaces.length}</span>
-                    )}
-                  </div>
-                  {state.partnerSharedPlaces.length > 0 ? (
-                    <div className="space-y-3">
-                      {state.partnerSharedPlaces.slice(0, isPaid ? undefined : 3).map((shared) => {
-                        const placeFromList = places.find(p => p.id === shared.placeId) ||
-                          favoritePlaces.find(p => p.id === shared.placeId);
-                        const fallbackImage = shared.imageUrl || 'https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?w=200&h=200&fit=crop';
-                        const resolvedPlace: Place = placeFromList || {
-                          id: shared.placeId,
-                          name: shared.placeName,
-                          description: 'Family-friendly place',
-                          address: '',
-                          rating: undefined,
-                          tags: [],
-                          imageUrl: fallbackImage,
-                          mapsUrl: `https://www.google.com/maps/place/?q=place_id:${shared.placeId}`,
-                          type: shared.placeType || 'all',
-                        };
-                        return (
-                          <button
-                            key={shared.placeId}
-                            onClick={() => setSelectedPlace(resolvedPlace)}
-                            className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 flex items-center gap-4 hover:bg-slate-50"
-                          >
-                            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-slate-100">
-                              <img src={resolvedPlace.imageUrl} className="w-full h-full object-cover" alt="" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-bold text-sm text-slate-800 truncate">{shared.placeName}</p>
-                              {shared.note && (
-                                <p className="text-xs text-slate-500 line-clamp-2 mt-1">{shared.note}</p>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="bg-slate-50 rounded-2xl p-6 text-center">
-                      <p className="text-sm text-slate-500">No shared favorites yet</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Shared Memories</h4>
-                    {!isPaid && partnerSharedMemories.length > 3 && (
-                      <span className="text-[9px] font-bold text-amber-500">Free: 3 of {partnerSharedMemories.length}</span>
-                    )}
-                  </div>
-                  {partnerSharedMemories.length > 0 ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {partnerSharedMemories.slice(0, isPaid ? undefined : 3).map((memory) => {
-                      const photos = memory.photoThumbUrls || memory.photoUrls || (memory.photoThumbUrl ? [memory.photoThumbUrl] : (memory.photoUrl ? [memory.photoUrl] : []));
-                      const mainPhoto = photos[0] || memory.photoThumbUrl || memory.photoUrl;
-                        return (
-                          <div key={memory.id} className="aspect-square rounded-xl overflow-hidden">
-                            {mainPhoto ? (
-                              <img src={mainPhoto} className="w-full h-full object-cover" alt="" />
-                            ) : (
-                              <div className="w-full h-full bg-slate-100 flex items-center justify-center text-slate-400 text-[10px] font-bold">
-                                Text
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="bg-slate-50 rounded-2xl p-6 text-center">
-                      <p className="text-sm text-slate-500">No shared memories yet</p>
-                    </div>
-                  )}
-                </div>
-            
-                {!isPaid && (state.favorites.length > 3 || state.memories.length > 3) && (
-                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-100">
-                    <div className="flex items-center gap-3">
-                      <svg className="w-8 h-8 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>
-                      <div>
-                        <p className="font-bold text-sm text-amber-800">Upgrade to Pro</p>
-                        <p className="text-xs text-amber-600">Unlimited shared favorites, memories & notes</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Partner Circles</h4>
-                  <p className="text-xs text-slate-500 -mt-2">Create themed collections to share with your partner</p>
-                  
-                  {partnerCircles.length > 0 ? (
-                    <div className="space-y-3">
-                      {partnerCircles.map((circle) => (
-                        <button
-                          key={circle.id}
-                          onClick={() => setSelectedCircle(circle)}
-                          className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 flex items-center justify-between hover:bg-slate-50"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center text-lg"><svg className="w-5 h-5 text-rose-400" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg></div>
-                            <div>
-                              <p className="font-bold text-sm text-slate-800">{circle.name}</p>
-                              <p className="text-xs text-slate-500">Shared with {partnerLabel}</p>
-                            </div>
-                          </div>
-                          <span className="text-slate-300">›</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="bg-slate-50 rounded-2xl p-6 text-center">
-                      <p className="text-sm text-slate-500">No partner circles yet</p>
-                      <p className="text-xs text-slate-400 mt-1">Create one below to start collecting places together</p>
-                    </div>
-                  )}
-                  
-                  <div className="bg-white rounded-2xl p-4 border border-slate-100">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="e.g., Date Night, Weekend Getaways..."
-                        value={newPartnerCircleName}
-                        onChange={(e) => setNewPartnerCircleName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleCreatePartnerCircle()}
-                        className="flex-1 text-sm outline-none text-slate-700 placeholder-slate-300"
-                      />
-                      <button
-                        onClick={handleCreatePartnerCircle}
-                        disabled={creatingPartnerCircle || !newPartnerCircleName.trim()}
-                        className="px-4 py-2 bg-rose-500 text-white rounded-xl text-xs font-bold disabled:opacity-60"
-                      >
-                        {creatingPartnerCircle ? '...' : 'Create'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Quick Notes</h4>
-                  <div className="bg-white rounded-2xl p-4 border border-slate-100">
-                    {noteError && (
-                      <p className="text-xs text-rose-500 mb-2">{noteError}</p>
-                    )}
-                    {partnerNotes.length > 0 ? (
-                      <div className="space-y-2 mb-3">
-                        {partnerNotes.map(note => (
-                          <div key={note.id} className="bg-slate-50 rounded-xl px-3 py-2">
-                            <p className="text-xs text-slate-600">{note.text}</p>
-                            <p className="text-[10px] text-slate-400 mt-1">
-                              {note.createdByName} · {new Date(note.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-400 mb-3">No notes yet.</p>
-                    )}
-                    <textarea 
-                      placeholder="Leave a note for your partner..."
-                      className="w-full h-20 text-sm resize-none outline-none text-slate-700 placeholder-slate-300"
-                      value={noteInput}
-                      onChange={(e) => setNoteInput(e.target.value)}
-                    />
-                    <div className="flex justify-end">
-                      <button
-                        onClick={handleSendPartnerNote}
-                        disabled={noteSending}
-                        className="px-4 py-2 bg-rose-500 text-white rounded-xl text-xs font-bold disabled:opacity-60"
-                      >
-                        {noteSending ? 'Sending...' : 'Send'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-        </div>
         </div>
       )}
 

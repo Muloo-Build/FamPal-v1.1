@@ -736,7 +736,7 @@ const VenueProfile: React.FC<VenueProfileProps> = ({
  )}
  {strollerFriendlyConfirmed && (
  <p className="text-xs font-medium text-slate-500">
- Reported by the FamPal community: stroller friendly access.
+ Reported by the FamPals community: stroller friendly access.
  </p>
  )}
  {strollerFriendlySuggested && (

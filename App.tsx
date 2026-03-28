@@ -6,7 +6,6 @@ import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-do
 import {
   auth,
   googleProvider,
-  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   onAuthStateChanged,
@@ -122,7 +121,7 @@ const App: React.FC = () => {
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [pendingJoinCircleId, setPendingJoinCircleId] = useState<string | null>(null);
-  const [dashboardTab, setDashboardTab] = useState<'explore' | 'favorites' | 'activity' | 'memories' | 'circles' | 'partner'>('explore');
+  const [dashboardTab, setDashboardTab] = useState<'explore' | 'favorites' | 'circles'>('explore');
   const [useNetflixLayout, setUseNetflixLayout] = useState(() => {
     try { return localStorage.getItem('fampal_netflix_layout') === 'true'; } catch { return false; }
   });
@@ -141,9 +140,11 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    // Apply both dark mode systems: Tailwind html.dark + CSS var [data-theme="dark"]
-    document.documentElement.classList.toggle('dark', darkMode);
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [darkMode]);
   const [savedPlacesLoaded, setSavedPlacesLoaded] = useState(false);
   const legacyFavoritesRef = useRef<string[]>([]);
@@ -155,7 +156,6 @@ const App: React.FC = () => {
   const lastAuthUidRef = useRef<string | null>(null);
   const joinInFlightRef = useRef(false);
   const lastJoinCodeRef = useRef<string | null>(null);
-  const onboardingLocallyCompletedRef = useRef(false);
   const navigate = useNavigate();
   const PENDING_JOIN_KEY = 'fampal_pending_join_code';
 
@@ -192,23 +192,28 @@ const App: React.FC = () => {
     setLoading(true);
     try {
       await authPersistenceReady;
-      authDebugLog('Google sign-in start', { flow: 'popup' });
-      await signInWithPopup(auth, googleProvider);
-      setView('dashboard');
-      navigate('/', { replace: true });
-    } catch (popupErr: any) {
-      authDebugLog('Popup sign-in failed', { code: popupErr?.code, message: popupErr?.message });
-      if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/cancelled-popup-request') {
+      authDebugLog('Google sign-in start', { flow: 'redirect' });
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(AUTH_REDIRECT_PENDING_KEY, '1');
+      }
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    } catch (redirectErr: any) {
+      authDebugLog('Redirect sign-in failed', { code: redirectErr?.code, message: redirectErr?.message });
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(AUTH_REDIRECT_PENDING_KEY);
+      }
+      if (redirectErr?.code === 'auth/cancelled-popup-request' || redirectErr?.code === 'auth/redirect-cancelled-by-user') {
         setError(null);
         setLoading(false);
         return;
       }
-      if (popupErr?.code === 'auth/unauthorized-domain') {
+      if (redirectErr?.code === 'auth/unauthorized-domain') {
         setError("This domain is not authorized for Google Sign-In. Please add it to Firebase Console -> Authentication -> Settings -> Authorized domains.");
         setLoading(false);
         return;
       }
-      setError(`Login failed: ${popupErr?.message || 'Unknown error'}`);
+      setError(`Login failed: ${redirectErr?.message || 'Unknown error'}`);
       setLoading(false);
     }
   }, [authBypassEnabled]);
@@ -441,7 +446,7 @@ const App: React.FC = () => {
           console.timeEnd('auth:resolved');
           const initialState = getInitialState(serializedUser);
           if (dbState) {
-            const onboardingCompleted = !!dbState.onboardingCompletedAt || dbState.onboardingCompleted === true || onboardingLocallyCompletedRef.current;
+            const onboardingCompleted = !!dbState.onboardingCompletedAt || dbState.onboardingCompleted === true;
             authDebugLog('User doc loaded', {
               onboardingCompleted,
               hasUserDoc: true,
@@ -528,7 +533,7 @@ const App: React.FC = () => {
             authDebugLog('User doc missing, defaulting to onboarding and creating profile doc');
             legacyFavoritesRef.current = [];
             savedPlacesMigratedAtRef.current = null;
-            setNeedsOnboarding(!onboardingLocallyCompletedRef.current);
+            setNeedsOnboarding(true);
             setOnboardingChecked(true);
             setState(prev => ({
               ...initialState,
@@ -549,7 +554,6 @@ const App: React.FC = () => {
         migrationAttemptedRef.current = false;
         aiResetAttemptedRef.current = null;
         lastAuthUidRef.current = null;
-        onboardingLocallyCompletedRef.current = false;
         setNeedsOnboarding(false);
         setOnboardingChecked(true);
         setPendingJoinCircleId(null);
@@ -614,7 +618,6 @@ const App: React.FC = () => {
     } catch (err) {
       console.warn('Failed to persist onboarding state.', err);
     } finally {
-      onboardingLocallyCompletedRef.current = true;
       setNeedsOnboarding(false);
       setView('dashboard');
     }
@@ -922,8 +925,6 @@ const App: React.FC = () => {
           initialUserPreferences={state.userPreferences}
           initialPreferences={state.preferences}
           initialChildren={state.children}
-          initialPets={state.pets}
-          initialPartnerLink={state.partnerLink}
           onComplete={handleOnboardingComplete}
         />
       );
@@ -945,7 +946,11 @@ const App: React.FC = () => {
       initialCircleId: pendingJoinCircleId,
       onClearInitialCircle: () => setPendingJoinCircleId(null),
       initialTab: dashboardTab,
-      onTabChange: (tab: string) => setDashboardTab(tab as typeof dashboardTab),
+      onTabChange: (tab: string) => {
+        if (tab === 'explore' || tab === 'favorites' || tab === 'circles') {
+          setDashboardTab(tab);
+        }
+      },
       discoveryMode: useNetflixLayout,
       onToggleDiscoveryMode: toggleDiscoveryMode,
     };
@@ -966,13 +971,11 @@ const App: React.FC = () => {
             initialUserPreferences={state.userPreferences}
             initialPreferences={state.preferences}
             initialChildren={state.children}
-            initialPets={state.pets}
-            initialPartnerLink={state.partnerLink}
             onComplete={handleOnboardingComplete}
           />
         );
       case 'profile':
-        return <Profile state={state} isGuest={isGuest} accessContext={accessContext} onSignOut={handleSignOut} setView={setView} onUpdateState={handleUpdateState} onResetOnboarding={() => setNeedsOnboarding(true)} darkMode={darkMode} onToggleDarkMode={() => { const next = !darkMode; setDarkMode(next); try { localStorage.setItem('fampal_dark_mode', next ? 'true' : 'false'); } catch {} }} />;
+        return <Profile state={state} isGuest={isGuest} accessContext={accessContext} onSignOut={handleSignOut} setView={setView} onUpdateState={handleUpdateState} onResetOnboarding={() => setNeedsOnboarding(true)} />;
       default:
         return <Login onLogin={handleSignIn} onEmailSignIn={handleEmailSignIn} onEmailSignUp={handleEmailSignUp} onForgotPassword={handleForgotPassword} onGuestLogin={handleGuestLogin} error={error} />;
     }
@@ -981,12 +984,12 @@ const App: React.FC = () => {
   const showBottomNav = !loading && onboardingChecked && (view === 'dashboard' || view === 'profile') && !needsOnboarding;
 
   const NavIcon = ({ type, active }: { type: string; active: boolean }) => {
-    const cls = `w-[22px] h-[22px] transition-colors ${active ? 'text-sky-500' : 'text-slate-400'}`;
+    const cls = `w-[22px] h-[22px] transition-colors ${active ? 'text-[#0052FF]' : 'text-slate-400'}`;
     switch (type) {
-      case 'home':
-        return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>;
+      case 'explore':
+        return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" /></svg>;
       case 'saved':
-        return <svg className={cls} viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>;
+        return <svg className={cls} viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>;
       case 'circles':
         return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>;
       case 'profile':
@@ -997,15 +1000,15 @@ const App: React.FC = () => {
   };
 
   const NavButton = ({ type, label, active, onClick }: { type: string; label: string; active: boolean; onClick: () => void }) => (
-    <button 
+    <button
       onClick={onClick}
       aria-label={label}
       className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all min-w-[56px] no-min-size ${
-        active ? 'text-sky-500' : 'text-slate-400'
+        active ? 'text-[#0052FF]' : 'text-slate-400'
       }`}
     >
       <NavIcon type={type} active={active} />
-      <span className={`text-[10px] font-semibold ${active ? 'text-sky-500' : 'text-slate-400'}`}>{label}</span>
+      <span className={`text-[10px] font-semibold ${active ? 'text-[#0052FF]' : 'text-slate-400'}`}>{label}</span>
     </button>
   );
 
@@ -1017,7 +1020,7 @@ const App: React.FC = () => {
           {showBottomNav && (
             <nav className="fixed bottom-0 left-0 right-0 bottom-nav-blur border-t border-slate-200/60 px-2 pt-2 pb-2 safe-area-inset-bottom z-[100]" style={{ pointerEvents: 'auto' }}>
               <div className="flex justify-around max-w-md mx-auto">
-                <NavButton type="home" label="Home" active={view === 'dashboard' && dashboardTab === 'explore'} onClick={() => { setDashboardTab('explore'); setView('dashboard'); }} />
+                <NavButton type="explore" label="Explore" active={view === 'dashboard' && dashboardTab === 'explore'} onClick={() => { setDashboardTab('explore'); setView('dashboard'); }} />
                 <NavButton type="saved" label="Saved" active={view === 'dashboard' && dashboardTab === 'favorites'} onClick={() => { setDashboardTab('favorites'); setView('dashboard'); }} />
                 <NavButton type="circles" label="Circles" active={view === 'dashboard' && dashboardTab === 'circles'} onClick={() => { setDashboardTab('circles'); setView('dashboard'); }} />
                 <NavButton type="profile" label="Profile" active={view === 'profile'} onClick={() => setView('profile')} />

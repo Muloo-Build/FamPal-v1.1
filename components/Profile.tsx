@@ -27,11 +27,9 @@ interface ProfileProps {
   setView: (view: string) => void;
   onUpdateState: (key: keyof AppState, value: any) => void;
   onResetOnboarding?: () => void;
-  darkMode?: boolean;
-  onToggleDarkMode?: () => void;
 }
 
-const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding, darkMode, onToggleDarkMode }) => {
+const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSignOut, setView, onUpdateState, onResetOnboarding }) => {
   const [childName, setChildName] = useState('');
   const [childAge, setChildAge] = useState('');
   const [showPreferences, setShowPreferences] = useState(false);
@@ -149,8 +147,8 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
 
   const shareApp = async () => {
     const shareData = {
-      title: 'FamPal',
-      text: 'Check out FamPal for finding the best kid and pet-friendly spots!',
+      title: 'FamPals',
+      text: 'Check out FamPals for finding the best kid-friendly spots!',
       url: window.location.origin,
     };
     try {
@@ -403,7 +401,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
 
         <div className="bg-gradient-to-br from-sky-500 to-blue-600 rounded-[40px] p-8 text-white shadow-xl shadow-sky-200 space-y-4">
           <h3 className="text-lg font-black leading-tight">Spread the Adventure</h3>
-          <p className="text-white/80 text-xs font-bold leading-relaxed">Know another parent who needs better weekend plans? Share FamPal with your group chat.</p>
+          <p className="text-white/80 text-xs font-bold leading-relaxed">Know another parent who needs better weekend plans? Share FamPals with your group chat.</p>
           <button 
             onClick={shareApp}
             className="w-full h-14 bg-white text-sky-600 rounded-2xl font-black text-xs uppercase tracking-widest active-press shadow-lg"
@@ -734,12 +732,6 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
 
         {!isGuest && (
           <div className="space-y-4">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Explorer Level</h3>
-          </div>
-        )}
-
-        {!isGuest && (
-          <div className="space-y-4">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Plan & Billing</h3>
             <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
               <button 
@@ -834,7 +826,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
             <div className="p-6 border-b border-rose-100">
               <h3 className="text-sm font-black text-rose-700 uppercase tracking-widest">Delete Account</h3>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                This permanently deletes your account sign-in and your cloud-synced FamPal data.
+                This permanently deletes your account sign-in and your cloud-synced FamPals data.
               </p>
             </div>
             {!showDeleteAccountConfirm ? (
@@ -905,7 +897,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
         <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
           {!isGuest && (
             <div className="px-6 pt-6 pb-2 text-xs text-slate-500 leading-relaxed border-b border-slate-100">
-              Your profile, memories, and saved places are stored in Firebase. Use the Data & Privacy section to selectively delete data, or Delete Account to remove everything.
+              Your profile and saved places are stored in Firebase. Use the Data & Privacy section to selectively delete data, or Delete Account to remove everything.
             </div>
           )}
           {!isGuest && (import.meta.env.VITE_ADMIN_UIDS || '').split(',').includes(state.user?.uid || '') && (
@@ -917,22 +909,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
               <span>→</span>
             </button>
           )}
-          {/* Dark mode toggle */}
-          {onToggleDarkMode && (
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 min-h-[52px]">
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest text-slate-500">Dark Mode</p>
-              </div>
-              <button
-                onClick={onToggleDarkMode}
-                aria-label="Toggle dark mode"
-                className={`w-11 h-6 rounded-full transition-all relative ${darkMode ? 'bg-[#0052ff]' : 'bg-slate-200'}`}
-              >
-                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${darkMode ? 'left-5' : 'left-0.5'}`} />
-              </button>
-            </div>
-          )}
-          <button
+          <button 
             onClick={onSignOut}
             className="w-full flex items-center justify-between p-6 text-slate-400 font-black text-xs uppercase tracking-widest hover:bg-rose-50 hover:text-rose-500 transition-colors min-h-[52px]"
           >

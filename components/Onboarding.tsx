@@ -54,9 +54,6 @@ const Onboarding: React.FC<OnboardingProps> = ({
   const [step, setStep] = useState(0);
   const [profileName, setProfileName] = useState(initialProfileInfo?.displayName || userName || '');
   const [children, setChildren] = useState<Child[]>(initialChildren || []);
-  const [selectedAgeGroups, setSelectedAgeGroups] = useState<string[]>(() =>
-    (initialChildren || []).map(c => (c as any).ageGroup).filter(Boolean)
-  );
   const [accessibility, setAccessibility] = useState<Record<string, boolean>>({
     usesPushchair: false,
     usesWheelchair: false,
@@ -93,23 +90,18 @@ const Onboarding: React.FC<OnboardingProps> = ({
     }));
   };
 
-  const toggleAgeGroup = (ageGroup: { label: string; min: number; max: number }) => {
-    setSelectedAgeGroups(prev => {
-      const isSelected = prev.includes(ageGroup.label);
-      if (isSelected) {
-        setChildren(prevChildren => prevChildren.filter(c => (c as any).ageGroup !== ageGroup.label));
-        return prev.filter(g => g !== ageGroup.label);
-      } else {
-        const newChild: Child = {
-          id: ageGroup.label,
-          name: ageGroup.label,
-          age: Math.floor((ageGroup.min + ageGroup.max) / 2),
-          ...(({ ageGroup: ageGroup.label } as any)),
-        };
-        setChildren(prevChildren => [...prevChildren, { ...newChild, ageGroup: ageGroup.label } as any]);
-        return [...prev, ageGroup.label];
-      }
-    });
+  const addChildByAgeGroup = (ageGroup: { label: string; min: number; max: number }) => {
+    const midAge = Math.floor((ageGroup.min + ageGroup.max) / 2);
+    const newChild: Child = {
+      id: Date.now().toString(),
+      name: ageGroup.label,
+      age: midAge,
+    };
+    setChildren(prev => [...prev, newChild]);
+  };
+
+  const removeChild = (id: string) => {
+    setChildren(prev => prev.filter(c => c.id !== id));
   };
 
   const buildResult = (skipped: boolean) => {
@@ -199,28 +191,35 @@ const Onboarding: React.FC<OnboardingProps> = ({
             </div>
 
             <div className="flex-1 flex flex-col justify-center gap-4">
-              <p className="text-xs font-semibold text-slate-400 text-center mb-1">Select all age groups that apply</p>
               <div className="grid grid-cols-2 gap-3">
-                {CHILD_AGE_GROUPS.map(group => {
-                  const isSelected = selectedAgeGroups.includes(group.label);
-                  return (
-                    <button
-                      key={group.label}
-                      onClick={() => toggleAgeGroup(group)}
-                      className={`py-4 px-3 rounded-2xl border-2 font-bold text-sm active:scale-95 transition-all ${
-                        isSelected
-                          ? 'bg-emerald-500 border-emerald-500 text-white shadow-md shadow-emerald-200'
-                          : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      }`}
-                    >
-                      {isSelected ? '✓ ' : ''}{group.label} yrs
-                    </button>
-                  );
-                })}
+                {CHILD_AGE_GROUPS.map(group => (
+                  <button
+                    key={group.label}
+                    onClick={() => addChildByAgeGroup(group)}
+                    className="py-4 px-3 rounded-2xl bg-emerald-50 border-2 border-emerald-200 text-emerald-700 font-bold text-sm hover:bg-emerald-100 active:scale-95 transition-all"
+                  >
+                    {group.label}
+                  </button>
+                ))}
               </div>
 
-              {selectedAgeGroups.length === 0 && (
-                <p className="text-center text-xs text-slate-400 mt-2">No kids? Just tap Next to skip.</p>
+              {children.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Children added</p>
+                  <div className="space-y-2">
+                    {children.map(child => (
+                      <div key={child.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-2">
+                        <span className="text-sm font-semibold text-slate-700">{child.name}</span>
+                        <button
+                          onClick={() => removeChild(child.id)}
+                          className="text-rose-500 hover:text-rose-600 font-bold text-lg"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>
