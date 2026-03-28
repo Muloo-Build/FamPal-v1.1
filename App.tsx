@@ -157,6 +157,7 @@ const App: React.FC = () => {
   const lastAuthUidRef = useRef<string | null>(null);
   const joinInFlightRef = useRef(false);
   const lastJoinCodeRef = useRef<string | null>(null);
+  const onboardingLocallyCompletedRef = useRef(false);
   const navigate = useNavigate();
   const PENDING_JOIN_KEY = 'fampal_pending_join_code';
 
@@ -442,7 +443,7 @@ const App: React.FC = () => {
           console.timeEnd('auth:resolved');
           const initialState = getInitialState(serializedUser);
           if (dbState) {
-            const onboardingCompleted = !!dbState.onboardingCompletedAt || dbState.onboardingCompleted === true;
+            const onboardingCompleted = !!dbState.onboardingCompletedAt || dbState.onboardingCompleted === true || onboardingLocallyCompletedRef.current;
             authDebugLog('User doc loaded', {
               onboardingCompleted,
               hasUserDoc: true,
@@ -529,7 +530,7 @@ const App: React.FC = () => {
             authDebugLog('User doc missing, defaulting to onboarding and creating profile doc');
             legacyFavoritesRef.current = [];
             savedPlacesMigratedAtRef.current = null;
-            setNeedsOnboarding(true);
+            setNeedsOnboarding(!onboardingLocallyCompletedRef.current);
             setOnboardingChecked(true);
             setState(prev => ({
               ...initialState,
@@ -550,6 +551,7 @@ const App: React.FC = () => {
         migrationAttemptedRef.current = false;
         aiResetAttemptedRef.current = null;
         lastAuthUidRef.current = null;
+        onboardingLocallyCompletedRef.current = false;
         setNeedsOnboarding(false);
         setOnboardingChecked(true);
         setPendingJoinCircleId(null);
@@ -614,6 +616,7 @@ const App: React.FC = () => {
     } catch (err) {
       console.warn('Failed to persist onboarding state.', err);
     } finally {
+      onboardingLocallyCompletedRef.current = true;
       setNeedsOnboarding(false);
       setView('dashboard');
     }
