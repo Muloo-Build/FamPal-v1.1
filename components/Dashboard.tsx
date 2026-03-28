@@ -85,11 +85,13 @@ interface PartnerNote {
 
 type TabButtonProps = { label: string; count?: number; active: boolean; onClick: () => void };
 const TabButton: React.FC<TabButtonProps> = ({ label, count, active, onClick }) => (
-  <button 
+  <button
     onClick={onClick}
     aria-label={`${label}${count !== undefined && count > 0 ? `, ${count} items` : ''}`}
-    className={`px-4 py-2.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0 min-h-[44px] ${
-      active ? 'stitch-chip-active text-[#b35b00]' : 'stitch-chip'
+    className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all shrink-0 min-h-[44px] ${
+      active
+        ? 'bg-[#0052ff] text-white shadow-[0_4px_16px_rgba(0,82,255,0.28)]'
+        : 'bg-white/70 text-[#58708f] border border-[rgba(24,0,82,0.06)]'
     }`}
   >
     {label}{count !== undefined && count > 0 ? ` (${count})` : ''}
@@ -1774,9 +1776,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 scroll-pl-4" style={{ scrollPaddingLeft: '1rem', scrollPaddingRight: '1rem' }}>
           <TabButton label="Explore" active={activeTab === 'explore'} onClick={() => handleTabChange('explore')} />
           <TabButton label="Saved" count={state.favorites.length} active={activeTab === 'favorites'} onClick={() => handleTabChange('favorites')} />
-          <TabButton label="My Activity" active={activeTab === 'activity'} onClick={() => handleTabChange('activity')} />
-          <TabButton label="Memories" count={state.memories.length} active={activeTab === 'memories'} onClick={() => handleTabChange('memories')} />
-          <TabButton label="Partner" active={activeTab === 'partner'} onClick={() => handleTabChange('partner')} />
           <TabButton label="Circles" count={circles.length} active={activeTab === 'circles'} onClick={() => handleTabChange('circles')} />
         </div>
         </div>

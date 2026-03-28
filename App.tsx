@@ -141,11 +141,9 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    // Apply both dark mode systems: Tailwind html.dark + CSS var [data-theme="dark"]
+    document.documentElement.classList.toggle('dark', darkMode);
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
   const [savedPlacesLoaded, setSavedPlacesLoaded] = useState(false);
   const legacyFavoritesRef = useRef<string[]>([]);
