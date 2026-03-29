@@ -12,18 +12,15 @@ export interface SearchContext {
   searchMode?: 'me' | 'family' | 'partner' | 'circle';
 }
 
-import { auth } from './lib/firebase';
-
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
 
 const getAI = () => {
   return {
     models: {
       generateContent: async (params: { model: string, contents: string, config?: any }) => {
-        const currentUser = auth?.currentUser;
-        let headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (currentUser) {
-          const token = await currentUser.getIdToken();
+        const token = typeof window !== 'undefined' ? localStorage.getItem('fampal_auth_token') : null;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
           headers.Authorization = `Bearer ${token}`;
         }
         

@@ -1,5 +1,4 @@
-// userData.ts — Railway Postgres API only. Firebase is used for auth only.
-import { auth } from './firebase';
+// userData.ts — Railway Postgres API only. JWT auth token stored in localStorage.
 import type { SavedPlace } from '../types';
 
 type Unsubscribe = () => void;
@@ -50,12 +49,9 @@ function sanitizeClientEntitlementPatch(value: any): Record<string, any> {
   return patch;
 }
 
-async function getAuthHeaders(uid: string): Promise<Record<string, string>> {
-  const currentUser = auth?.currentUser;
-  if (!currentUser || currentUser.uid !== uid) {
-    throw new Error('auth_user_unavailable');
-  }
-  const token = await currentUser.getIdToken();
+async function getAuthHeaders(_uid: string): Promise<Record<string, string>> {
+  const token = localStorage.getItem('fampal_auth_token');
+  if (!token) throw new Error('auth_user_unavailable');
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',

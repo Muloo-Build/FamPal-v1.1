@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at         TIMESTAMPTZ DEFAULT now()
 );
 
+-- Add password_hash column for email/password auth (idempotent)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
 -- ─── SAVED PLACES ─────────────────────────────────────────────────────────────
 -- Mirrors users/{uid}/savedPlaces/{placeId} subcollection.
 CREATE TABLE IF NOT EXISTS saved_places (

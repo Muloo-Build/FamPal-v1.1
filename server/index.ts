@@ -8,10 +8,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
-import { GoogleAuth } from 'google-auth-library';
+import jwt from 'jsonwebtoken';
+import { OAuth2Client, GoogleAuth } from 'google-auth-library';
 import { getExploreIntentDefinition, type ExploreIntentId } from './exploreIntentConfig.js';
 import { closePostgresPool, isPostgresEnabled, pgHealthCheck, pgQuery } from './postgres.js';
 
@@ -69,6 +67,8 @@ console.log('[FamPal API] NODE_ENV:', process.env.NODE_ENV);
 // Extend Express Request type to include verified user
 interface AuthenticatedRequest extends Request {
   uid?: string;
+  userEmail?: string;
+  userDisplayName?: string;
 }
 
 type PostgresPlaceClaimRow = {
@@ -392,30 +392,18 @@ app.use('/api/places', (req, res, next) => {
   next();
 });
 
-// Initialize Firebase Admin SDK
-// In production on Cloud Run/App Hosting, uses Application Default Credentials (ADC)
-// Can also use FIREBASE_SERVICE_ACCOUNT if explicitly provided
-let db: ReturnType<typeof getFirestore>;
-let adminAuth: ReturnType<typeof getAuth>;
+// ── JWT Auth Setup ────────────────────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET || 'fampal-dev-secret-change-in-prod';
+const JWT_EXPIRY = '30d';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const googleOAuthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
-try {
-  if (!getApps().length) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      initializeApp({ credential: cert(serviceAccount) });
-      console.log('[FamPal API] Initialized with explicit service account');
-    } else {
-      // Use ADC (works on Cloud Run, App Engine, Cloud Functions)
-      initializeApp();
-      console.log('[FamPal API] Initialized with Application Default Credentials');
-    }
-  }
-  db = getFirestore();
-  adminAuth = getAuth();
-  console.log('[FamPal API] Firebase Admin SDK initialized successfully');
-} catch (err) {
-  console.error('[FamPal API] Firebase Admin init error:', err);
-  process.exit(1);
+function signJwt(payload: { uid: string; email: string | null; displayName: string | null }): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+}
+
+async function verifyJwt(token: string): Promise<{ uid: string; email: string | null; displayName: string | null }> {
+  return jwt.verify(token, JWT_SECRET) as any;
 }
 
 // Convert a raw Google Places photo URL to our server-side proxy URL.
@@ -582,22 +570,23 @@ async function ensurePostgresUserRow(userId: string): Promise<PostgresUserRow> {
 }
 
 async function ensurePostgresUser(userId: string): Promise<{ email: string; displayName: string | null }> {
-  const userRecord = await adminAuth.getUser(userId);
+  // Look up existing user data from Postgres (no longer using Firebase Admin)
+  const result = await pgQuery<{ email: string | null; display_name: string | null }>('select email, display_name from users where id = $1', [userId]);
+  const user = result.rows[0];
   await pgQuery(
     `
-      insert into users (id, email, display_name, photo_url, updated_at)
-      values ($1, $2, $3, $4, now())
+      insert into users (id, email, display_name, updated_at)
+      values ($1, $2, $3, now())
       on conflict (id) do update
-      set email = excluded.email,
+      set email = coalesce(excluded.email, users.email),
           display_name = coalesce(excluded.display_name, users.display_name),
-          photo_url = coalesce(excluded.photo_url, users.photo_url),
           updated_at = now()
     `,
-    [userId, userRecord.email || null, userRecord.displayName || null, userRecord.photoURL || null],
+    [userId, user?.email || null, user?.display_name || null],
   );
   return {
-    email: userRecord.email || '',
-    displayName: userRecord.displayName || null,
+    email: user?.email || '',
+    displayName: user?.display_name || null,
   };
 }
 
@@ -620,9 +609,7 @@ async function loadUserState(userId: string): Promise<Record<string, any> | null
     return mapPostgresUserState(row);
   }
 
-  const userDoc = await db.collection('users').doc(userId).get();
-  if (!userDoc.exists) return null;
-  return userDoc.data() || null;
+  return null; // Firestore removed — Postgres is required
 }
 
 async function upsertUserProfileData(userId: string, profile: Record<string, any>): Promise<void> {
@@ -650,10 +637,7 @@ async function upsertUserProfileData(userId: string, profile: Record<string, any
     return;
   }
 
-  await db.collection('users').doc(userId).set({
-    profile: cleanedProfile || {},
-    lastLoginAt: new Date().toISOString(),
-  }, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function saveUserFieldData(userId: string, key: string, value: unknown): Promise<void> {
@@ -717,9 +701,7 @@ async function saveUserFieldData(userId: string, key: string, value: unknown): P
     return;
   }
 
-  const payload: Record<string, any> = {};
-  payload[key] = cleanedValue === undefined ? FieldValue.delete() : cleanedValue;
-  await db.collection('users').doc(userId).set(payload, { merge: true });
+  // Firestore path removed — data is stored in Postgres only
 }
 
 async function setUserEntitlementData(userId: string, entitlement: Record<string, any>): Promise<void> {
@@ -753,9 +735,7 @@ async function setUserEntitlementData(userId: string, entitlement: Record<string
     return;
   }
 
-  await db.collection('users').doc(userId).set({
-    entitlement: cleanedEntitlement || {},
-  }, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> {
@@ -799,20 +779,7 @@ async function listSavedPlaces(userId: string): Promise<Record<string, any>[]> {
     return result.rows.map(mapPostgresSavedPlace);
   }
 
-  const snap = await db.collection('users').doc(userId).collection('savedPlaces').get();
-  return snap.docs
-    .map((docSnap) => {
-      const data = docSnap.data() || {};
-      return {
-        placeId: data.placeId || docSnap.id,
-        ...data,
-      } as Record<string, any>;
-    })
-    .sort((a: Record<string, any>, b: Record<string, any>) => {
-      const aMs = toIsoString(a.savedAt) ? Date.parse(String(toIsoString(a.savedAt))) : 0;
-      const bMs = toIsoString(b.savedAt) ? Date.parse(String(toIsoString(b.savedAt))) : 0;
-      return bMs - aMs;
-    });
+  return []; // Firestore removed — Postgres is required
 }
 
 async function upsertSavedPlaceData(userId: string, place: Record<string, any>): Promise<void> {
@@ -873,7 +840,7 @@ async function upsertSavedPlaceData(userId: string, place: Record<string, any>):
     return;
   }
 
-  await db.collection('users').doc(userId).collection('savedPlaces').doc(placeId).set(cleanedPlace || {}, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function deleteSavedPlaceData(userId: string, placeId: string): Promise<void> {
@@ -888,7 +855,7 @@ async function deleteSavedPlaceData(userId: string, placeId: string): Promise<vo
     return;
   }
 
-  await db.collection('users').doc(userId).collection('savedPlaces').doc(placeId).delete();
+  // Firestore removed — Postgres is required
 }
 
 function getPartnerThreadIdForUsers(userIdA: string, userIdB: string): string {
@@ -911,10 +878,7 @@ async function getUserPartnerLink(userId: string): Promise<Record<string, any> |
     return Object.keys(partnerLink).length > 0 ? partnerLink : null;
   }
 
-  const userDoc = await db.collection('users').doc(userId).get();
-  if (!userDoc.exists) return null;
-  const userData = userDoc.data() || {};
-  return userData.partnerLink ? { ...userData.partnerLink } : null;
+  return null; // Firestore removed — Postgres is required
 }
 
 async function hydratePartnerLink(partnerLink: Record<string, any> | null): Promise<Record<string, any> | null> {
@@ -931,16 +895,7 @@ async function hydratePartnerLink(partnerLink: Record<string, any> | null): Prom
     };
   }
 
-  const partnerDoc = await db.collection('users').doc(String(partnerLink.partnerUserId)).get();
-  if (!partnerDoc.exists) return partnerLink;
-  const partnerData = partnerDoc.data() || {};
-  const partnerProfile = partnerData.profile || {};
-  return {
-    ...partnerLink,
-    partnerName: partnerLink.partnerName || partnerProfile.displayName || partnerProfile.email || 'Partner',
-    partnerEmail: partnerLink.partnerEmail || partnerProfile.email || undefined,
-    partnerPhotoURL: partnerLink.partnerPhotoURL || partnerProfile.photoURL || undefined,
-  };
+  return partnerLink; // Firestore removed — Postgres is required
 }
 
 async function findPartnerByInviteCode(inviteCode: string, excludingUserId: string): Promise<{ id: string; partnerLink: Record<string, any>; profile: { displayName: string | null; email: string | null; photoURL: string | null } } | null> {
@@ -964,22 +919,7 @@ async function findPartnerByInviteCode(inviteCode: string, excludingUserId: stri
     };
   }
 
-  const snap = await db.collection('users')
-    .where('partnerLink.inviteCode', '==', inviteCode)
-    .get();
-  const match = snap.docs.find((docSnap) => docSnap.id !== excludingUserId);
-  if (!match) return null;
-  const partnerData = match.data() || {};
-  const partnerProfile = partnerData.profile || {};
-  return {
-    id: match.id,
-    partnerLink: partnerData.partnerLink || {},
-    profile: {
-      displayName: partnerProfile.displayName || null,
-      email: partnerProfile.email || null,
-      photoURL: partnerProfile.photoURL || null,
-    },
-  };
+  return null; // Firestore removed — Postgres is required
 }
 
 async function ensurePartnerThreadRecord(userId: string, partnerUserId: string): Promise<string> {
@@ -1012,19 +952,7 @@ async function ensurePartnerThreadRecord(userId: string, partnerUserId: string):
     return threadId;
   }
 
-  const threadRef = db.collection('partnerThreads').doc(threadId);
-  const threadSnap = await threadRef.get();
-  if (!threadSnap.exists) {
-    await threadRef.set({
-      members: [userId, partnerUserId],
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      status: 'active',
-    });
-  } else if ((threadSnap.data() || {}).status === 'closed') {
-    await threadRef.set({ status: 'active', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  }
-  return threadId;
+  return threadId; // Firestore removed — Postgres is required
 }
 
 function mapPartnerThreadNote(row: PostgresPartnerThreadNoteRow): Record<string, any> {
@@ -1126,28 +1054,8 @@ async function loadPartnerThreadState(userId: string): Promise<{
     };
   }
 
-  const threadRef = db.collection('partnerThreads').doc(threadId);
-  const [threadDoc, notesSnap, placesSnap, memoriesSnap] = await Promise.all([
-    threadRef.get(),
-    threadRef.collection('notes').get(),
-    threadRef.collection('sharedPlaces').get(),
-    threadRef.collection('sharedMemories').get(),
-  ]);
-
-  const threadData = threadDoc.exists ? (threadDoc.data() || {}) : {};
-  return {
-    partnerLink,
-    notes: notesSnap.docs
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
-      .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''))),
-    sharedPlaces: placesSnap.docs
-      .map((docSnap) => (docSnap.data() || {}) as Record<string, any>)
-      .sort((a: Record<string, any>, b: Record<string, any>) => String(b.addedAt || '').localeCompare(String(a.addedAt || ''))),
-    sharedMemories: memoriesSnap.docs
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
-      .sort((a: Record<string, any>, b: Record<string, any>) => String(b.date || '').localeCompare(String(a.date || ''))),
-    familyPool: isRecord(threadData.entitlementPool) ? threadData.entitlementPool : null,
-  };
+  // Firestore removed — Postgres is required
+  return { partnerLink, notes: [], sharedPlaces: [], sharedMemories: [], familyPool: null };
 }
 
 async function savePartnerThreadNote(userId: string, text: string, createdByName: string): Promise<Record<string, any>> {
@@ -1179,9 +1087,7 @@ async function savePartnerThreadNote(userId: string, text: string, createdByName
     return note;
   }
 
-  await db.collection('partnerThreads').doc(threadId).collection('notes').doc(note.id).set(note);
-  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  return note;
+  return note; // Firestore removed — Postgres is required
 }
 
 async function savePartnerThreadPlace(userId: string, placeId: string, place: Record<string, any>): Promise<void> {
@@ -1212,8 +1118,7 @@ async function savePartnerThreadPlace(userId: string, placeId: string, place: Re
     return;
   }
 
-  await db.collection('partnerThreads').doc(threadId).collection('sharedPlaces').doc(placeId).set(payload, { merge: true });
-  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function savePartnerThreadMemory(userId: string, memoryId: string, memory: Record<string, any>): Promise<void> {
@@ -1242,8 +1147,7 @@ async function savePartnerThreadMemory(userId: string, memoryId: string, memory:
     return;
   }
 
-  await db.collection('partnerThreads').doc(threadId).collection('sharedMemories').doc(memoryId).set(payload, { merge: true });
-  await db.collection('partnerThreads').doc(threadId).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function savePartnerThreadFamilyPool(userId: string, familyPool: Record<string, any>): Promise<Record<string, any>> {
@@ -1277,11 +1181,7 @@ async function savePartnerThreadFamilyPool(userId: string, familyPool: Record<st
     return mergedRaw.entitlementPool;
   }
 
-  await db.collection('partnerThreads').doc(threadId).set({
-    entitlementPool: nextPool,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  return nextPool;
+  return nextPool; // Firestore removed — Postgres is required
 }
 
 function generateCircleJoinCode(): string {
@@ -1363,8 +1263,7 @@ async function isCircleMember(circleId: string, userId: string): Promise<boolean
     return !!result.rowCount;
   }
 
-  const memberDoc = await db.collection('circles').doc(circleId).collection('members').doc(userId).get();
-  return memberDoc.exists;
+  return false; // Firestore removed — Postgres is required
 }
 
 async function getCircleByJoinCode(joinCode: string): Promise<PostgresCircleRow | null> {
@@ -1395,25 +1294,7 @@ async function listUserCirclesData(userId: string): Promise<Record<string, any>[
     return result.rows.map(mapCircle);
   }
 
-  const membersSnap = await db.collectionGroup('members').where('uid', '==', userId).get();
-  const circleDocs = await Promise.all(
-    membersSnap.docs.map(async (memberDoc) => {
-      const circleRef = memberDoc.ref.parent.parent;
-      if (!circleRef) return null;
-      const circleSnap = await circleRef.get();
-      if (!circleSnap.exists) return null;
-      const data = circleSnap.data() || {};
-      return {
-        id: circleSnap.id,
-        name: data.name,
-        createdBy: data.createdBy,
-        createdAt: data.createdAt,
-        joinCode: data.joinCode,
-        isPartnerCircle: data.isPartnerCircle || false,
-      };
-    }),
-  );
-  return circleDocs.filter(Boolean) as Record<string, any>[];
+  return []; // Firestore removed — Postgres is required
 }
 
 async function createCircleData(
@@ -1484,38 +1365,7 @@ async function createCircleData(
     };
   }
 
-  const circleRef = db.collection('circles').doc();
-  await circleRef.set({
-    name,
-    createdBy: userId,
-    createdAt,
-    joinCode,
-    isPartnerCircle,
-  });
-  await circleRef.collection('members').doc(userId).set({
-    uid: userId,
-    role: 'owner',
-    displayName: owner.displayName || undefined,
-    email: owner.email || undefined,
-    joinedAt: createdAt,
-  });
-  if (options?.partner?.uid) {
-    await circleRef.collection('members').doc(options.partner.uid).set({
-      uid: options.partner.uid,
-      role: 'member',
-      displayName: options.partner.displayName || undefined,
-      email: options.partner.email || undefined,
-      joinedAt: createdAt,
-    });
-  }
-  return {
-    id: circleRef.id,
-    name,
-    createdBy: userId,
-    createdAt,
-    joinCode,
-    isPartnerCircle,
-  };
+  throw new Error('postgres_required'); // Firestore removed — Postgres is required
 }
 
 async function joinCircleData(code: string, user: { uid: string; displayName?: string | null; email?: string | null }): Promise<Record<string, any>> {
@@ -1544,27 +1394,7 @@ async function joinCircleData(code: string, user: { uid: string; displayName?: s
     return mapCircle(circle);
   }
 
-  const snap = await db.collection('circles').where('joinCode', '==', code).get();
-  if (snap.empty) {
-    throw new Error('circle_not_found');
-  }
-  const circleDoc = snap.docs[0];
-  const circleData = circleDoc.data() || {};
-  await circleDoc.ref.collection('members').doc(user.uid).set({
-    uid: user.uid,
-    role: 'member',
-    displayName: user.displayName || undefined,
-    email: user.email || undefined,
-    joinedAt: new Date().toISOString(),
-  }, { merge: true });
-  return {
-    id: circleDoc.id,
-    name: circleData.name,
-    createdBy: circleData.createdBy,
-    createdAt: circleData.createdAt,
-    joinCode: circleData.joinCode,
-    isPartnerCircle: circleData.isPartnerCircle || false,
-  };
+  throw new Error('postgres_required'); // Firestore removed — Postgres is required
 }
 
 async function listCircleMembersData(circleId: string, userId: string): Promise<Record<string, any>[]> {
@@ -1585,8 +1415,7 @@ async function listCircleMembersData(circleId: string, userId: string): Promise<
     return result.rows.map(mapCircleMember);
   }
 
-  const snap = await db.collection('circles').doc(circleId).collection('members').get();
-  return snap.docs.map((docSnap) => docSnap.data() || {});
+  return []; // Firestore removed — Postgres is required
 }
 
 async function listCirclePlacesData(circleId: string, userId: string): Promise<Record<string, any>[]> {
@@ -1607,8 +1436,7 @@ async function listCirclePlacesData(circleId: string, userId: string): Promise<R
     return result.rows.map(mapCirclePlace);
   }
 
-  const snap = await db.collection('circles').doc(circleId).collection('places').get();
-  return snap.docs.map((docSnap) => docSnap.data() || {});
+  return []; // Firestore removed — Postgres is required
 }
 
 async function saveCirclePlaceData(circleId: string, userId: string, place: Record<string, any>): Promise<void> {
@@ -1636,7 +1464,7 @@ async function saveCirclePlaceData(circleId: string, userId: string, place: Reco
     return;
   }
 
-  await db.collection('circles').doc(circleId).collection('places').doc(placeId).set(place, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function removeCirclePlaceData(circleId: string, userId: string, placeId: string): Promise<void> {
@@ -1652,7 +1480,7 @@ async function removeCirclePlaceData(circleId: string, userId: string, placeId: 
     return;
   }
 
-  await db.collection('circles').doc(circleId).collection('places').doc(placeId).delete();
+  // Firestore removed — Postgres is required
 }
 
 async function listCircleCommentsData(circleId: string, placeId: string, userId: string): Promise<Record<string, any>[]> {
@@ -1673,10 +1501,7 @@ async function listCircleCommentsData(circleId: string, placeId: string, userId:
     return result.rows.map(mapCircleComment);
   }
 
-  const snap = await db.collection('circles').doc(circleId).collection('placeComments').where('placeId', '==', placeId).get();
-  return snap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
-    .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+  return []; // Firestore removed — Postgres is required
 }
 
 async function addCircleCommentData(circleId: string, userId: string, placeId: string, comment: Record<string, any>): Promise<void> {
@@ -1696,7 +1521,7 @@ async function addCircleCommentData(circleId: string, userId: string, placeId: s
     return;
   }
 
-  await db.collection('circles').doc(circleId).collection('placeComments').add(payload);
+  // Firestore removed — Postgres is required
 }
 
 async function listCircleMemoriesData(circleId: string, userId: string): Promise<Record<string, any>[]> {
@@ -1717,10 +1542,7 @@ async function listCircleMemoriesData(circleId: string, userId: string): Promise
     return result.rows.map(mapCircleMemory);
   }
 
-  const snap = await db.collection('circles').doc(circleId).collection('memories').get();
-  return snap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }) as Record<string, any>)
-    .sort((a: Record<string, any>, b: Record<string, any>) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+  return []; // Firestore removed — Postgres is required
 }
 
 async function addCircleMemoryData(circleId: string, userId: string, memory: Record<string, any>): Promise<void> {
@@ -1747,7 +1569,7 @@ async function addCircleMemoryData(circleId: string, userId: string, memory: Rec
     return;
   }
 
-  await db.collection('circles').doc(circleId).collection('memories').doc(memoryId).set(memory, { merge: true });
+  // Firestore removed — Postgres is required
 }
 
 async function deleteCircleData(circleId: string, userId: string): Promise<void> {
@@ -1767,20 +1589,7 @@ async function deleteCircleData(circleId: string, userId: string): Promise<void>
     return;
   }
 
-  const circleRef = db.collection('circles').doc(circleId);
-  const circleSnap = await circleRef.get();
-  if (!circleSnap.exists) {
-    throw new Error('circle_not_found');
-  }
-  const circleData = circleSnap.data() || {};
-  if (circleData.createdBy !== userId) {
-    throw new Error('circle_owner_required');
-  }
-  for (const subcol of ['members', 'places', 'memories', 'placeComments']) {
-    const subcolSnap = await circleRef.collection(subcol).get();
-    await Promise.all(subcolSnap.docs.map((docSnap) => docSnap.ref.delete()));
-  }
-  await circleRef.delete();
+  throw new Error('postgres_required'); // Firestore removed — Postgres is required
 }
 
 async function leaveCircleData(circleId: string, userId: string): Promise<void> {
@@ -1803,16 +1612,7 @@ async function leaveCircleData(circleId: string, userId: string): Promise<void> 
     return;
   }
 
-  const circleRef = db.collection('circles').doc(circleId);
-  const circleSnap = await circleRef.get();
-  if (!circleSnap.exists) {
-    throw new Error('circle_not_found');
-  }
-  const circleData = circleSnap.data() || {};
-  if (circleData.createdBy === userId) {
-    throw new Error('circle_owner_cannot_leave');
-  }
-  await circleRef.collection('members').doc(userId).delete();
+  throw new Error('postgres_required'); // Firestore removed — Postgres is required
 }
 
 function mapPostgresPlaceClaim(row: PostgresPlaceClaimRow) {
@@ -1857,24 +1657,131 @@ async function getPostgresPlaceClaimById(claimId: string): Promise<PostgresPlace
 }
 
 async function isAdminUserViaFirestore(userId: string): Promise<boolean> {
-  const userDoc = await db.collection('users').doc(userId).get();
-  const userData = userDoc.data();
-  return userData?.isAdmin === true || isAdminAccessUser(userData as Record<string, any> | undefined);
+  // Firestore removed — use Postgres
+  if (isPostgresEnabled) {
+    const row = await getPostgresUserRow(userId);
+    if (!row) return false;
+    return row.is_admin || isAdminAccessUser(mapPostgresUserState(row));
+  }
+  return false;
 }
-// Middleware to verify Firebase Auth token
+// ── Auth: Google OAuth ────────────────────────────────────────────────────────
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || typeof idToken !== 'string') {
+      return res.status(400).json({ error: 'Missing idToken' });
+    }
+    if (!GOOGLE_CLIENT_ID) {
+      return res.status(500).json({ error: 'Google OAuth not configured (missing GOOGLE_CLIENT_ID)' });
+    }
+    const ticket = await googleOAuthClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
+    if (!payload?.sub) return res.status(401).json({ error: 'Invalid Google token' });
+
+    const uid = payload.sub;
+    const email = payload.email || null;
+    const displayName = payload.name || null;
+    const photoURL = payload.picture || null;
+
+    if (isPostgresEnabled) {
+      await pgQuery(
+        `insert into users (id, email, display_name, photo_url, updated_at)
+         values ($1, $2, $3, $4, now())
+         on conflict (id) do update
+         set email = coalesce($2, users.email),
+             display_name = coalesce($3, users.display_name),
+             photo_url = coalesce($4, users.photo_url),
+             updated_at = now()`,
+        [uid, email, displayName, photoURL]
+      );
+    }
+
+    const token = signJwt({ uid, email, displayName });
+    return res.json({ token, uid, email, displayName, photoURL });
+  } catch (err: any) {
+    console.error('Google auth error:', err?.message || err);
+    return res.status(401).json({ error: 'Google authentication failed' });
+  }
+});
+
+// ── Auth: Email/Password ──────────────────────────────────────────────────────
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { email, password, displayName } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Missing email or password' });
+    const bcrypt = await import('bcryptjs');
+    const hash = await bcrypt.hash(password, 12);
+    const uid = `email_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    if (isPostgresEnabled) {
+      try {
+        await pgQuery(
+          `insert into users (id, email, display_name, password_hash, created_at, updated_at) values ($1, $2, $3, $4, now(), now())`,
+          [uid, email, displayName || null, hash]
+        );
+      } catch (e: any) {
+        if (e.code === '23505') return res.status(409).json({ error: 'Email already registered' });
+        throw e;
+      }
+    }
+    const token = signJwt({ uid, email, displayName: displayName || null });
+    return res.json({ token, uid, email, displayName: displayName || null });
+  } catch (err: any) {
+    console.error('Signup error:', err?.message);
+    return res.status(500).json({ error: 'Signup failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Missing email or password' });
+    if (!isPostgresEnabled) return res.status(500).json({ error: 'Database not available' });
+    const result = await pgQuery<{ id: string; display_name: string | null; password_hash: string | null }>(
+      `select id, display_name, password_hash from users where email = $1 limit 1`,
+      [email]
+    );
+    const user = result.rows[0];
+    if (!user || !user.password_hash) return res.status(401).json({ error: 'Invalid email or password' });
+    const bcrypt = await import('bcryptjs');
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    const token = signJwt({ uid: user.id, email, displayName: user.display_name });
+    return res.json({ token, uid: user.id, email, displayName: user.display_name });
+  } catch (err: any) {
+    console.error('Login error:', err?.message);
+    return res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/refresh', async (req: any, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing token' });
+  }
+  try {
+    const decoded = await verifyJwt(authHeader.split('Bearer ')[1]);
+    const token = signJwt({ uid: decoded.uid, email: decoded.email, displayName: decoded.displayName });
+    return res.json({ token });
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+});
+
+// Middleware to verify JWT auth token
 async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid authorization header' });
   }
-  
-  const idToken = authHeader.split('Bearer ')[1];
+  const token = authHeader.split('Bearer ')[1];
   try {
-    const decodedToken = await adminAuth.verifyIdToken(idToken);
-    req.uid = decodedToken.uid;
+    const decoded = await verifyJwt(token);
+    req.uid = decoded.uid;
+    req.userEmail = decoded.email || undefined;
+    req.userDisplayName = decoded.displayName || undefined;
     next();
   } catch (err: any) {
-    console.error('[FamPal API] Auth verification failed:', err?.message);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -2045,225 +1952,20 @@ async function runPlaceRefreshJob(options: PlaceRefreshOptions = {}) {
     };
   }
 
-  const limitPerRun = Math.max(1, Math.min(Number(options.limit || PLACE_REFRESH_MAX_PER_RUN), 200));
-  const candidateLimit = Math.max(limitPerRun * PLACE_REFRESH_CANDIDATE_MULTIPLIER, limitPerRun);
-  const dryRun = options.dryRun === true;
-  const now = new Date();
-  const staleCandidates: Array<{ id: string; data: any }> = [];
-
-  const snap = await db.collection('places').orderBy('lastRefreshedAt', 'asc').limit(candidateLimit).get();
-  snap.docs.forEach((docSnap) => {
-    const data = docSnap.data() || {};
-    const lastRefreshedAt = data.lastRefreshedAt?.toDate?.() || null;
-    const savedCount = Math.max(0, Number(data.savedCount || 0));
-    const viewCount = Math.max(0, Number(data.viewCount || 0));
-    const popularityScore = Math.max(
-      0,
-      Number(data.popularityScore || computePopularityScore(savedCount, viewCount, Number(data.userRatingsTotal || 0)))
-    );
-    const staleAfterDays = computeStaleAfterDays(savedCount, viewCount, popularityScore);
-    const staleMillis = staleAfterDays * 24 * 60 * 60 * 1000;
-    const staleByLastRefreshed = !lastRefreshedAt || now.getTime() - lastRefreshedAt.getTime() >= staleMillis;
-    const nextRefreshAtRaw = data.refreshState?.nextRefreshAt;
-    const nextRefreshAt = nextRefreshAtRaw?.toDate?.() || (typeof nextRefreshAtRaw === 'string' ? new Date(nextRefreshAtRaw) : null);
-    const staleByNextRefresh = nextRefreshAt instanceof Date && !Number.isNaN(nextRefreshAt.getTime())
-      ? nextRefreshAt.getTime() <= now.getTime()
-      : false;
-    if (staleByLastRefreshed || staleByNextRefresh) {
-      staleCandidates.push({ id: docSnap.id, data });
-    }
-  });
-
-  const staleTargets = staleCandidates
-    .filter((item) => typeof item.data.googlePlaceId === 'string' && item.data.googlePlaceId.length > 0)
-    .slice(0, limitPerRun);
-
-  let refreshedCount = 0;
-  let failedCount = 0;
-  let skippedCount = 0;
-  const errors: Array<{ placeId: string; error: string }> = [];
-
-  const queue = [...staleTargets];
-  const workers = Array.from({ length: PLACE_REFRESH_CONCURRENCY }).map(async () => {
-    while (queue.length > 0) {
-      const next = queue.shift();
-      if (!next) return;
-      const placeRef = db.collection('places').doc(next.id);
-      const googlePlaceId = String(next.data.googlePlaceId || '');
-      if (!googlePlaceId) {
-        skippedCount += 1;
-        continue;
-      }
-      const previousFailures = Number(next.data?.refreshState?.consecutiveFailures || 0);
-      const requestedCategory = next.data?.categoryContext?.requestedCategory || 'all';
-      const savedCount = Math.max(0, Number(next.data.savedCount || 0));
-      const viewCount = Math.max(0, Number(next.data.viewCount || 0));
-
-      if (dryRun) {
-        refreshedCount += 1;
-        continue;
-      }
-
-      try {
-        await placeRef.set({
-          refreshState: {
-            ...(next.data.refreshState || {}),
-            status: 'refreshing',
-            lastAttemptAt: FieldValue.serverTimestamp(),
-          },
-        }, { merge: true });
-
-        const p = await fetchGooglePlaceForRefresh(googlePlaceId);
-        const rawPhotoUrl = p.photos?.[0]
-          ? `https://places.googleapis.com/v1/${p.photos[0].name}/media?maxHeightPx=400&maxWidthPx=600&key=${GOOGLE_PLACES_API_KEY}`
-          : null;
-        const imageUrl = toProxyPhotoUrl(rawPhotoUrl);
-        const source = {
-          googlePlaceId: p.id || googlePlaceId,
-          name: p.displayName?.text || next.data.name || 'Unknown Place',
-          address: p.formattedAddress || next.data.address || '',
-          lat: p.location?.latitude || next.data?.geo?.lat || 0,
-          lng: p.location?.longitude || next.data?.geo?.lng || 0,
-          types: Array.isArray(p.types) ? p.types : [],
-          primaryType: p.primaryType || null,
-          primaryTypeDisplayName: p.primaryTypeDisplayName?.text || null,
-          rating: typeof p.rating === 'number' ? p.rating : null,
-          userRatingsTotal: typeof p.userRatingCount === 'number' ? p.userRatingCount : null,
-          priceLevel: p.priceLevel || null,
-          mapsUrl: p.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${googlePlaceId}`,
-          photoUrl: imageUrl,
-          goodForChildren: p.goodForChildren === true,
-          menuForChildren: p.menuForChildren === true,
-          restroom: p.restroom === true,
-          allowsDogs: p.allowsDogs === true,
-          accessibilityOptions: p.accessibilityOptions || {},
-          parkingOptions: p.parkingOptions || {},
-        };
-        const facets = buildFacetSnapshotFromGoogle({
-          name: source.name,
-          address: source.address,
-          types: source.types,
-          primaryTypeDisplayName: source.primaryTypeDisplayName || undefined,
-          goodForChildren: source.goodForChildren,
-          menuForChildren: source.menuForChildren,
-          restroom: source.restroom,
-          allowsDogs: source.allowsDogs,
-          accessibilityOptions: source.accessibilityOptions,
-          requestedCategory,
-          rating: source.rating || undefined,
-          userRatingsTotal: source.userRatingsTotal || undefined,
-        });
-        const popularityScore = computePopularityScore(savedCount, viewCount, source.userRatingsTotal || undefined);
-        const staleAfterDays = computeStaleAfterDays(savedCount, viewCount, popularityScore);
-        const nextRefreshAt = new Date(Date.now() + staleAfterDays * 24 * 60 * 60 * 1000);
-        const versionHash = crypto
-          .createHash('sha256')
-          .update(JSON.stringify({
-            id: source.googlePlaceId,
-            rating: source.rating,
-            userRatingsTotal: source.userRatingsTotal,
-            priceLevel: source.priceLevel,
-            types: source.types,
-            lat: source.lat,
-            lng: source.lng,
-          }))
-          .digest('hex')
-          .slice(0, 12);
-
-        await placeRef.set({
-          placeId: next.id,
-          googlePlaceId: source.googlePlaceId,
-          name: source.name,
-          normalizedName: source.name.toLowerCase().trim(),
-          address: source.address,
-          geo: { lat: source.lat, lng: source.lng },
-          rating: source.rating,
-          userRatingsTotal: source.userRatingsTotal,
-          priceLevel: source.priceLevel,
-          mapsUrl: source.mapsUrl,
-          imageUrl: toProxyPhotoUrl(source.photoUrl),
-          types: source.types,
-          primaryType: source.primaryType,
-          facets: {
-            categories: facets.categories,
-            venueTypes: facets.venueTypes,
-            foodTypes: facets.foodTypes,
-            kidFriendlySignals: facets.kidFriendlySignals,
-            accessibilitySignals: facets.accessibilitySignals,
-            indoorOutdoorSignals: facets.indoorOutdoorSignals,
-          },
-          facetsConfidence: facets.confidence,
-          sourceVersions: { google: versionHash },
-          popularityScore,
-          staleAfterDays,
-          savedCount,
-          viewCount,
-          refreshState: {
-            status: 'ready',
-            consecutiveFailures: 0,
-            lastAttemptAt: FieldValue.serverTimestamp(),
-            lastError: null,
-            nextRefreshAt,
-          },
-          lastRefreshedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-
-        await placeRef.collection('sources').doc('google').set({
-          googlePlaceId: source.googlePlaceId,
-          versionHash,
-          fetchedAt: FieldValue.serverTimestamp(),
-          requestedCategory,
-          searchQuery: null,
-          ingestionSource: 'scheduler_refresh',
-          source: p,
-        }, { merge: true });
-
-        refreshedCount += 1;
-      } catch (err: any) {
-        failedCount += 1;
-        const failureCount = previousFailures + 1;
-        const backoffDays = Math.min(30, Math.max(1, 2 ** Math.min(failureCount, 5)));
-        const nextRetry = new Date(Date.now() + backoffDays * 24 * 60 * 60 * 1000);
-        errors.push({ placeId: next.id, error: err?.message || 'refresh_failed' });
-        await placeRef.set({
-          refreshState: {
-            status: 'error',
-            consecutiveFailures: failureCount,
-            lastAttemptAt: FieldValue.serverTimestamp(),
-            lastError: err?.message || 'refresh_failed',
-            nextRefreshAt: nextRetry,
-          },
-        }, { merge: true });
-      }
-    }
-  });
-
-  await Promise.all(workers);
-  const elapsedMs = Date.now() - startedAt;
-  console.log('[FamPal Refresh] completed', {
-    dryRun,
-    scannedCount: snap.size,
-    staleCount: staleTargets.length,
-    refreshedCount,
-    failedCount,
-    skippedCount,
-    limitPerRun,
-    elapsedMs,
-  });
-
+  // Firestore-based place refresh is no longer supported — Postgres is the data store
   return {
-    ok: true,
-    dryRun,
-    scannedCount: snap.size,
-    staleCount: staleTargets.length,
-    refreshedCount,
-    failedCount,
-    skippedCount,
-    limitPerRun,
-    elapsedMs,
-    errors: errors.slice(0, 20),
+    ok: false,
+    reason: 'Firestore place refresh removed — not supported with Postgres-only setup',
+    scannedCount: 0,
+    staleCount: 0,
+    refreshedCount: 0,
+    failedCount: 0,
+    skippedCount: 0,
+    limitPerRun: 0,
+    elapsedMs: 0,
   };
+
+
 }
 
 if (!PLACES_CONFIGURED) {
@@ -2774,14 +2476,12 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
 app.get('/api/subscription/status/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const userDoc = await db.collection('users').doc(userId).get();
-    
-    if (!userDoc.exists) {
-      return res.json({ entitlement: null });
+    if (isPostgresEnabled) {
+      const row = await getPostgresUserRow(userId);
+      if (!row) return res.json({ entitlement: null });
+      return res.json({ entitlement: parsePgJson(row.entitlement, null) });
     }
-    
-    const data = userDoc.data();
-    return res.json({ entitlement: data?.entitlement || null });
+    return res.json({ entitlement: null });
   } catch (error) {
     console.error('Error fetching subscription status:', error);
     return res.status(500).json({ error: 'Failed to fetch status' });
@@ -2882,9 +2582,8 @@ app.post('/api/play/subscription/sync', requireAuth, async (req: AuthenticatedRe
       return res.status(400).json({ error: 'Unsupported subscription product id' });
     }
 
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    const userData = userDoc.exists ? (userDoc.data() as Record<string, any>) : {};
+    const pgUserRow = isPostgresEnabled ? await getPostgresUserRow(userId) : null;
+    const userData = pgUserRow ? mapPostgresUserState(pgUserRow) : {};
     if (isAdminAccessUser(userData)) {
       return res.json({
         status: 'active',
@@ -2915,7 +2614,7 @@ app.post('/api/play/subscription/sync', requireAuth, async (req: AuthenticatedRe
       }
     }
 
-    const existingEntitlement = (userData?.entitlement || {}) as Record<string, any>;
+    const existingEntitlement = (parsePgJson<Record<string, any>>(pgUserRow?.entitlement, {})) as Record<string, any>;
     const nowIso = new Date().toISOString();
     const nextResetDate = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString();
     const tier = isPlayStatusPaid(status) ? 'pro' : 'free';
@@ -2951,7 +2650,7 @@ app.post('/api/play/subscription/sync', requireAuth, async (req: AuthenticatedRe
       mergedEntitlement.entitlement_start_date = null;
     }
 
-    await userRef.set({ entitlement: mergedEntitlement }, { merge: true });
+    await setUserEntitlementData(userId, mergedEntitlement);
 
     return res.json({
       status,
@@ -3095,45 +2794,37 @@ app.post('/api/paystack/webhook', async (req: any, res) => {
       
       case 'subscription.disable':
       case 'subscription.not_renew': {
-        const subscriptionCode = event.data.subscription_code;
-        const userSnapshot = await db.collection('users')
-          .where('entitlement.paystack_subscription_code', '==', subscriptionCode)
-          .limit(1)
-          .get();
-        
-        if (!userSnapshot.empty) {
-          const userDoc = userSnapshot.docs[0];
-          const userData = userDoc.data() as Record<string, any> | undefined;
-          if (isAdminAccessUser(userData)) {
-            console.log(`[FamPal API] Skipped cancellation downgrade for admin/review account ${userDoc.id}`);
-            break;
+        // Firestore removed — Postgres lookup by paystack_subscription_code
+        if (isPostgresEnabled) {
+          const subscriptionCode = event.data.subscription_code;
+          const result = await pgQuery<PostgresUserRow>(
+            `select * from users where entitlement->>'paystack_subscription_code' = $1 limit 1`,
+            [subscriptionCode],
+          );
+          const row = result.rows[0];
+          if (row && !isAdminAccessUser(mapPostgresUserState(row))) {
+            const ent = { ...parsePgJson<Record<string, any>>(row.entitlement, {}), plan_status: 'cancelled' };
+            await setUserEntitlementData(row.id, ent);
+            console.log(`Cancelled subscription for user ${row.id}`);
           }
-          await userDoc.ref.update({
-            'entitlement.plan_status': 'cancelled',
-          });
-          console.log(`Cancelled subscription for user ${userDoc.id}`);
         }
         break;
       }
-      
+
       case 'invoice.payment_failed': {
-        const customerCode = event.data.customer?.customer_code;
-        if (customerCode) {
-          const userSnapshot = await db.collection('users')
-            .where('entitlement.paystack_customer_code', '==', customerCode)
-            .limit(1)
-            .get();
-          
-          if (!userSnapshot.empty) {
-            const userDoc = userSnapshot.docs[0];
-            const userData = userDoc.data() as Record<string, any> | undefined;
-            if (isAdminAccessUser(userData)) {
-              console.log(`[FamPal API] Skipped expiry downgrade for admin/review account ${userDoc.id}`);
-              break;
+        // Firestore removed — Postgres lookup by paystack_customer_code
+        if (isPostgresEnabled) {
+          const customerCode = event.data.customer?.customer_code;
+          if (customerCode) {
+            const result = await pgQuery<PostgresUserRow>(
+              `select * from users where entitlement->>'paystack_customer_code' = $1 limit 1`,
+              [customerCode],
+            );
+            const row = result.rows[0];
+            if (row && !isAdminAccessUser(mapPostgresUserState(row))) {
+              const ent = { ...parsePgJson<Record<string, any>>(row.entitlement, {}), plan_status: 'expired' };
+              await setUserEntitlementData(row.id, ent);
             }
-            await userDoc.ref.update({
-              'entitlement.plan_status': 'expired',
-            });
           }
         }
         break;
@@ -3150,23 +2841,24 @@ app.post('/api/paystack/webhook', async (req: any, res) => {
 app.post('/api/subscription/cancel', async (req, res) => {
   try {
     const { userId } = req.body;
-    
+
     if (!userId || !PAYSTACK_SECRET_KEY) {
       return res.status(400).json({ error: 'Invalid request' });
     }
-    
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.data();
-    if (isAdminAccessUser(userData as Record<string, any> | undefined)) {
+
+    const pgRow = isPostgresEnabled ? await getPostgresUserRow(userId) : null;
+    const userData = pgRow ? mapPostgresUserState(pgRow) : {};
+    if (isAdminAccessUser(userData)) {
       return res.json({ success: true, skipped: true, reason: 'admin_review_account' });
     }
-    const subscriptionCode = userData?.entitlement?.paystack_subscription_code;
-    const emailToken = userData?.entitlement?.paystack_email_token;
-    
+    const entitlement = pgRow ? parsePgJson<Record<string, any>>(pgRow.entitlement, {}) : {};
+    const subscriptionCode = entitlement?.paystack_subscription_code;
+    const emailToken = entitlement?.paystack_email_token;
+
     if (!subscriptionCode) {
       return res.status(400).json({ error: 'No active subscription' });
     }
-    
+
     const response = await fetch(`https://api.paystack.co/subscription/disable`, {
       method: 'POST',
       headers: {
@@ -3175,16 +2867,14 @@ app.post('/api/subscription/cancel', async (req, res) => {
       },
       body: JSON.stringify({ code: subscriptionCode, token: emailToken }),
     });
-    
+
     const data = await response.json();
-    
+
     if (data.status) {
-      await userDoc.ref.update({
-        'entitlement.plan_status': 'cancelled',
-      });
+      await setUserEntitlementData(userId, { ...entitlement, plan_status: 'cancelled' });
       return res.json({ success: true });
     }
-    
+
     return res.status(400).json({ error: 'Failed to cancel subscription' });
   } catch (error) {
     console.error('Cancel error:', error);
@@ -3193,14 +2883,13 @@ app.post('/api/subscription/cancel', async (req, res) => {
 });
 
 async function updateUserEntitlement(
-  userId: string, 
-  plan: string, 
+  userId: string,
+  plan: string,
   reference: string,
   paymentData: any
 ) {
-  const userRef = db.collection('users').doc(userId);
-  const existingUserDoc = await userRef.get();
-  const existingUserData = existingUserDoc.exists ? (existingUserDoc.data() as Record<string, any>) : undefined;
+  const pgRow = isPostgresEnabled ? await getPostgresUserRow(userId) : null;
+  const existingUserData = pgRow ? mapPostgresUserState(pgRow) : undefined;
   if (isAdminAccessUser(existingUserData)) {
     console.log(`[FamPal API] Skipped entitlement overwrite for admin/review account ${userId}`);
     return;
@@ -3227,10 +2916,7 @@ async function updateUserEntitlement(
     ai_requests_reset_date: nextMonth.toISOString(),
   };
   
-  await userRef.set(
-    { entitlement },
-    { merge: true }
-  );
+  await setUserEntitlementData(userId, entitlement);
 }
 
 app.get('/api/paystack/config', (_req, res) => {
@@ -3291,16 +2977,7 @@ app.post('/api/partner/unlink', requireAuth, async (req: AuthenticatedRequest, r
       return res.json({ success: true });
     }
 
-    const batch = db.batch();
-    const userRef = db.collection('users').doc(userId);
-    batch.update(userRef, { partnerLink: FieldValue.delete() });
-    if (actualPartnerUserId) {
-      const partnerRef = db.collection('users').doc(actualPartnerUserId);
-      batch.update(partnerRef, { partnerLink: FieldValue.delete() });
-      const threadRef = db.collection('partnerThreads').doc(getPartnerThreadIdForUsers(userId, actualPartnerUserId));
-      batch.set(threadRef, { status: 'closed', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    }
-    await batch.commit();
+    // Firestore removed — Postgres is required
     res.json({ success: true });
   } catch (err: any) {
     console.error('[FamPal API] Partner unlink failed:', err?.message || err);
@@ -3427,57 +3104,8 @@ app.post('/api/partner/link', requireAuth, async (req: AuthenticatedRequest, res
       return res.json({ success: true, partnerLink: nextUserLink });
     }
 
-    const partnerDoc = await db.collection('users').doc(partnerUserId).get();
-    if (!partnerDoc.exists) {
-      return res.status(404).json({ error: 'Partner not found' });
-    }
-    const partnerData = partnerDoc.data() || {};
-    const partnerProfile = partnerData.profile || {};
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.exists ? userDoc.data() : {};
-    const userProfile = userData?.profile || {};
-    const batch = db.batch();
-    const userRef = db.collection('users').doc(userId);
-    batch.set(userRef, {
-      partnerLink: {
-        status: 'accepted',
-        inviteCode: partnerInviteCode,
-        linkedAt: new Date().toISOString(),
-        partnerUserId,
-        partnerName: partnerProfile.displayName || partnerProfile.email || 'Partner',
-        partnerEmail: partnerProfile.email,
-        partnerPhotoURL: partnerProfile.photoURL,
-      },
-    }, { merge: true });
-    const partnerRef = db.collection('users').doc(partnerUserId);
-    batch.set(partnerRef, {
-      partnerLink: {
-        status: 'accepted',
-        inviteCode: partnerInviteCode,
-        linkedAt: new Date().toISOString(),
-        partnerUserId: userId,
-        partnerName: userProfile.displayName || selfName || userProfile.email || 'Partner',
-        partnerEmail: userProfile.email,
-        partnerPhotoURL: userProfile.photoURL,
-      },
-    }, { merge: true });
-    const threadRef = db.collection('partnerThreads').doc(getPartnerThreadIdForUsers(userId, partnerUserId));
-    batch.set(threadRef, {
-      members: [userId, partnerUserId],
-      createdAt: FieldValue.serverTimestamp(),
-      status: 'active',
-    }, { merge: true });
-    await batch.commit();
-    res.json({ 
-      success: true, 
-      partnerLink: {
-        status: 'accepted',
-        partnerUserId,
-        partnerName: partnerMatch.profile.displayName || partnerMatch.profile.email || 'Partner',
-        partnerEmail: partnerMatch.profile.email || undefined,
-        partnerPhotoURL: partnerMatch.profile.photoURL || undefined,
-      }
-    });
+    // Firestore removed — Postgres is required
+    return res.status(500).json({ error: 'Database not available for partner link' });
   } catch (err: any) {
     console.error('[FamPal API] Partner link failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to link partner', details: err?.message });
@@ -3622,50 +3250,8 @@ app.post('/api/place-claims', requireAuth, async (req: AuthenticatedRequest, res
       return res.json({ success: true, claimId });
     }
 
-    const existing = await db.collection('placeClaims')
-      .where('placeId', '==', placeId)
-      .where('userId', '==', userId)
-      .where('status', '==', 'pending')
-      .get();
-
-    if (!existing.empty) {
-      return res.status(409).json({ error: 'You already have a pending claim for this place' });
-    }
-
-    const verifiedExisting = await db.collection('placeClaims')
-      .where('placeId', '==', placeId)
-      .where('status', '==', 'verified')
-      .get();
-
-    if (!verifiedExisting.empty) {
-      return res.status(409).json({ error: 'This place already has a verified owner' });
-    }
-
-    const userRecord = await adminAuth.getUser(userId);
-
-    const claim = {
-      placeId,
-      placeName,
-      userId,
-      userEmail: userRecord.email || '',
-      userDisplayName: userRecord.displayName || '',
-      status: 'pending',
-      businessRole,
-      businessEmail: businessEmail || null,
-      businessPhone: businessPhone || null,
-      verificationMethod: verificationMethod || 'manual',
-      verificationEvidence,
-      createdAt: FieldValue.serverTimestamp(),
-    };
-
-    const docRef = await db.collection('placeClaims').add(claim);
-
-    await db.collection('places').doc(placeId).set({
-      ownerStatus: 'pending',
-    }, { merge: true });
-
-    console.log(`[FamPal API] Place claim submitted: ${docRef.id} for place ${placeId} by ${userId}`);
-    res.json({ success: true, claimId: docRef.id });
+    // Firestore removed — Postgres is required
+    return res.status(500).json({ error: 'Database not available' });
   } catch (err: any) {
     console.error('[FamPal API] Place claim submission failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to submit claim' });
@@ -3695,21 +3281,7 @@ app.get('/api/place-claims/my-claims', requireAuth, async (req: AuthenticatedReq
       return res.json({ claims: result.rows.map(mapPostgresPlaceClaim) });
     }
 
-    const snapshot = await db.collection('placeClaims')
-      .where('userId', '==', userId)
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    const claims = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate?.()?.toISOString?.() || data.createdAt,
-        reviewedAt: data.reviewedAt?.toDate?.()?.toISOString?.() || data.reviewedAt,
-      };
-    });
-    res.json({ claims });
+    return res.json({ claims: [] }); // Firestore removed — Postgres is required
   } catch (err: any) {
     console.error('[FamPal API] Fetch my claims failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claims' });
@@ -3744,18 +3316,7 @@ app.get('/api/place-claims/place/:placeId', requireAuth, async (req: Authenticat
       return res.json({ claim: mapPostgresPlaceClaim(result.rows[0]) });
     }
 
-    const snapshot = await db.collection('placeClaims')
-      .where('placeId', '==', placeId)
-      .where('userId', '==', userId)
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) {
-      return res.json({ claim: null });
-    }
-
-    const doc = snapshot.docs[0];
-    res.json({ claim: { id: doc.id, ...doc.data() } });
+    return res.json({ claim: null }); // Firestore removed — Postgres is required
   } catch (err: any) {
     console.error('[FamPal API] Fetch place claim failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claim' });
@@ -3791,22 +3352,7 @@ app.get('/api/admin/place-claims', requireAuth, async (req: AuthenticatedRequest
       return res.json({ claims: result.rows.map(mapPostgresPlaceClaim) });
     }
 
-    const snapshot = await db.collection('placeClaims')
-      .where('status', '==', status)
-      .orderBy('createdAt', 'desc')
-      .limit(50)
-      .get();
-
-    const claims = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate?.()?.toISOString?.() || data.createdAt,
-        reviewedAt: data.reviewedAt?.toDate?.()?.toISOString?.() || data.reviewedAt,
-      };
-    });
-    res.json({ claims });
+    return res.json({ claims: [] }); // Firestore removed — Postgres is required
   } catch (err: any) {
     console.error('[FamPal API] Admin fetch claims failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch claims' });
@@ -3899,59 +3445,8 @@ app.post('/api/admin/place-claims/:claimId/verify', requireAuth, async (req: Aut
       return res.json({ success: true, status: action === 'verify' ? 'verified' : 'rejected' });
     }
 
-    const claimRef = db.collection('placeClaims').doc(claimId);
-    const claimDoc = await claimRef.get();
-
-    if (!claimDoc.exists) {
-      return res.status(404).json({ error: 'Claim not found' });
-    }
-
-    const claimData = claimDoc.data()!;
-    const batch = db.batch();
-
-    if (action === 'verify') {
-      batch.update(claimRef, {
-        status: 'verified',
-        reviewedAt: FieldValue.serverTimestamp(),
-        reviewedBy: adminUserId,
-      });
-
-      const placeRef = db.collection('places').doc(claimData.placeId);
-      batch.set(placeRef, {
-        ownerStatus: 'verified',
-        ownerTier: 'free',
-        ownerIds: FieldValue.arrayUnion(claimData.userId),
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-
-      const ownerProfileRef = db.collection('placeOwnerProfiles').doc(`${claimData.placeId}_${claimData.userId}`);
-      batch.set(ownerProfileRef, {
-        placeId: claimData.placeId,
-        userId: claimData.userId,
-        tier: 'free',
-        verifiedAt: new Date().toISOString(),
-        ownerContent: {},
-        lastUpdatedAt: new Date().toISOString(),
-      });
-
-      console.log(`[FamPal API] Claim ${claimId} verified for place ${claimData.placeId}`);
-    } else {
-      batch.update(claimRef, {
-        status: 'rejected',
-        rejectionReason: rejectionReason || 'Insufficient evidence',
-        reviewedAt: FieldValue.serverTimestamp(),
-        reviewedBy: adminUserId,
-      });
-
-      batch.set(db.collection('places').doc(claimData.placeId), {
-        ownerStatus: 'none',
-      }, { merge: true });
-
-      console.log(`[FamPal API] Claim ${claimId} rejected for place ${claimData.placeId}`);
-    }
-
-    await batch.commit();
-    res.json({ success: true, status: action === 'verify' ? 'verified' : 'rejected' });
+    // Firestore removed — Postgres is required
+    return res.status(500).json({ error: 'Database not available' });
   } catch (err: any) {
     console.error('[FamPal API] Admin claim verification failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to process claim' });
@@ -3985,19 +3480,7 @@ app.get('/api/place-owner/:placeId', async (req: Request, res: Response) => {
       });
     }
 
-    const placeDoc = await db.collection('places').doc(placeId).get();
-
-    if (!placeDoc.exists) {
-      return res.json({ ownerStatus: 'none', ownerContent: null });
-    }
-
-    const data = placeDoc.data()!;
-    res.json({
-      ownerStatus: data.ownerStatus || 'none',
-      ownerTier: data.ownerTier || null,
-      ownerContent: data.ownerContent || null,
-      promotedUntil: data.promotedUntil || null,
-    });
+    return res.json({ ownerStatus: 'none', ownerContent: null }); // Firestore removed — Postgres is required
   } catch (err: any) {
     console.error('[FamPal API] Fetch place owner info failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to fetch owner info' });
@@ -4056,37 +3539,8 @@ app.put('/api/place-owner/:placeId/content', requireAuth, async (req: Authentica
       return res.json({ success: true, ownerContent: sanitized });
     }
 
-    const placeDoc = await db.collection('places').doc(placeId).get();
-    if (!placeDoc.exists) {
-      return res.status(404).json({ error: 'Place not found' });
-    }
-
-    const placeData = placeDoc.data()!;
-    if (!placeData.ownerIds?.includes(userId)) {
-      return res.status(403).json({ error: 'You are not a verified owner of this place' });
-    }
-
-    const tier = placeData.ownerTier || 'free';
-    const sanitized = { ...ownerContent };
-    if (tier === 'free') {
-      delete sanitized.specialOffers;
-      delete sanitized.events;
-      delete sanitized.photos;
-    }
-
-    await db.collection('places').doc(placeId).set({
-      ownerContent: sanitized,
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    const profileId = `${placeId}_${userId}`;
-    await db.collection('placeOwnerProfiles').doc(profileId).set({
-      ownerContent: sanitized,
-      lastUpdatedAt: new Date().toISOString(),
-    }, { merge: true });
-
-    console.log(`[FamPal API] Owner content updated for place ${placeId} by ${userId}`);
-    res.json({ success: true, ownerContent: sanitized });
+    // Firestore removed — Postgres is required
+    return res.status(500).json({ error: 'Database not available' });
   } catch (err: any) {
     console.error('[FamPal API] Owner content update failed:', err?.message || err);
     res.status(500).json({ error: 'Failed to update content' });
@@ -4106,9 +3560,13 @@ app.post('/api/paystack/init-business-payment', requireAuth, async (req: Authent
       return res.status(500).json({ error: 'Payment system not configured' });
     }
 
-    const placeDoc = await db.collection('places').doc(placeId).get();
-    if (!placeDoc.exists || !placeDoc.data()?.ownerIds?.includes(userId)) {
-      return res.status(403).json({ error: 'You must be a verified owner' });
+    if (isPostgresEnabled) {
+      const result = await pgQuery<{ owner_ids: string[] | null }>(`select owner_ids from places where id = $1 limit 1`, [placeId]);
+      if (!result.rowCount || !(result.rows[0].owner_ids || []).includes(userId)) {
+        return res.status(403).json({ error: 'You must be a verified owner' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Database not available' });
     }
 
     const planConfig = PLANS['business_pro'];
@@ -4187,53 +3645,38 @@ app.post('/api/paystack/verify-business', requireAuth, async (req: Authenticated
     const placeId = metadata?.placeId;
     const userId = metadata?.userId;
 
-    if (placeId && userId) {
+    if (placeId && userId && isPostgresEnabled) {
       const now = new Date();
       const endDate = new Date(now);
       endDate.setMonth(endDate.getMonth() + 1);
-
-      await db.collection('places').doc(placeId).set({
-        ownerTier: 'business_pro',
-        promotedUntil: endDate.toISOString(),
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-
       const profileId = `${placeId}_${userId}`;
-      await db.collection('placeOwnerProfiles').doc(profileId).set({
-        tier: 'business_pro',
-        lastUpdatedAt: new Date().toISOString(),
-        paystack_reference: reference,
-        paystack_subscription_code: data.data.subscription_code || null,
-      }, { merge: true });
 
-      if (isPostgresEnabled) {
-        await ensurePostgresUser(userId);
-        await ensurePostgresPlace(placeId, '');
-        await pgQuery(
-          `
-            update places
-            set owner_tier = 'business_pro',
-                raw = jsonb_set(coalesce(raw, '{}'::jsonb), '{promotedUntil}', to_jsonb($2::text), true),
-                updated_at = now()
-            where id = $1
-          `,
-          [placeId, endDate.toISOString()],
-        );
-        await pgQuery(
-          `
-            insert into place_owner_profiles (
-              id, place_id, user_id, tier, paystack_reference, paystack_subscription_code, last_updated_at
-            )
-            values ($1, $2, $3, 'business_pro', $4, $5, now())
-            on conflict (place_id, user_id) do update
-            set tier = excluded.tier,
-                paystack_reference = excluded.paystack_reference,
-                paystack_subscription_code = excluded.paystack_subscription_code,
-                last_updated_at = excluded.last_updated_at
-          `,
-          [profileId, placeId, userId, reference, data.data.subscription_code || null],
-        );
-      }
+      await ensurePostgresUser(userId);
+      await ensurePostgresPlace(placeId, '');
+      await pgQuery(
+        `
+          update places
+          set owner_tier = 'business_pro',
+              raw = jsonb_set(coalesce(raw, '{}'::jsonb), '{promotedUntil}', to_jsonb($2::text), true),
+              updated_at = now()
+          where id = $1
+        `,
+        [placeId, endDate.toISOString()],
+      );
+      await pgQuery(
+        `
+          insert into place_owner_profiles (
+            id, place_id, user_id, tier, paystack_reference, paystack_subscription_code, last_updated_at
+          )
+          values ($1, $2, $3, 'business_pro', $4, $5, now())
+          on conflict (place_id, user_id) do update
+          set tier = excluded.tier,
+              paystack_reference = excluded.paystack_reference,
+              paystack_subscription_code = excluded.paystack_subscription_code,
+              last_updated_at = excluded.last_updated_at
+        `,
+        [profileId, placeId, userId, reference, data.data.subscription_code || null],
+      );
 
       console.log(`[FamPal API] Business Pro activated for place ${placeId}`);
     }
@@ -4704,7 +4147,7 @@ app.put('/api/user/:uid/saved-places/:placeId', requireAuth, async (req: Authent
         SET payload = EXCLUDED.payload, place_raw = EXCLUDED.place_raw, saved_at = now()
       `, [req.uid, placeId, savedPlace?.name || null, savedPlace?.address || null, savedPlace?.rating || null, JSON.stringify(savedPlace || {}), JSON.stringify(placeSnapshot || {})]);
     } else {
-      await db.collection('users').doc(req.uid).collection('savedPlaces').doc(placeId).set({ ...savedPlace, placeSnapshot, placeId }, { merge: true });
+      // Firestore removed — Postgres is required
     }
     return res.json({ ok: true });
   } catch (err: any) {
@@ -4720,7 +4163,7 @@ app.delete('/api/user/:uid/saved-places/:placeId', requireAuth, async (req: Auth
     if (isPostgresEnabled) {
       await pgQuery(`DELETE FROM saved_places WHERE user_id = $1 AND place_id = $2`, [req.uid, placeId]);
     } else {
-      await db.collection('users').doc(req.uid).collection('savedPlaces').doc(placeId).delete();
+      // Firestore removed — Postgres is required
     }
     return res.json({ ok: true });
   } catch (err: any) {
@@ -4736,13 +4179,7 @@ app.get('/api/places/:placeId/contributions', async (req: Request, res: Response
       const result = await pgQuery(`SELECT * FROM place_contributions WHERE place_id = $1`, [placeId]);
       return res.json({ contributions: result.rows });
     }
-    const types = ['accessibility', 'familyFacilities', 'petFriendly'];
-    let contributions: any[] = [];
-    for (const type of types) {
-      const snap = await db.collection('places').doc(placeId).collection(type).get();
-      snap.forEach(doc => contributions.push({ id: doc.id, type, ...doc.data() }));
-    }
-    return res.json({ contributions });
+    return res.json({ contributions: [] }); // Firestore removed — Postgres is required
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed' });
   }
@@ -4761,7 +4198,7 @@ app.post('/api/places/:placeId/contributions', requireAuth, async (req: Authenti
         SET features = EXCLUDED.features, summary = EXCLUDED.summary, updated_at = now()
       `, [placeId, dbType, req.uid, JSON.stringify(features || []), summary || null, visitVerified || false]);
     } else {
-      await db.collection('places').doc(placeId).collection(type).doc(req.uid!).set({ features, summary, visitVerified, updatedAt: new Date().toISOString() }, { merge: true });
+      // Firestore removed — Postgres is required
     }
     return res.json({ ok: true });
   } catch (err: any) {
@@ -4836,9 +4273,7 @@ app.post('/api/reports', requireAuth, async (req: AuthenticatedRequest, res: Res
         VALUES ($1, $2, $3, $4, $5, $6)
       `, [placeId, contentType, contentId, req.uid, reason, details]);
     } else {
-      await db.collection('reports').add({
-        placeId, contentType, contentId, reportedBy: req.uid, reason, details, createdAt: new Date().toISOString()
-      });
+      // Firestore removed — Postgres is required
     }
     return res.json({ ok: true });
   } catch (err: any) {

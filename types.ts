@@ -1,5 +1,6 @@
 
-import type { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from './lib/firebase';
+// Timestamp is re-exported from lib/firebase (Firestore Timestamp shape stub)
 import type { AccessibilityFeatureValue, FamilyFacilityValue, PetFriendlyFeatureValue, UserAccessibilityNeeds } from './src/types/place';
 import type { ClaimStatus, OwnerTier, OwnerContent, PlaceClaim, PlaceOwnerProfile } from './src/types/placeOwner';
 export type {

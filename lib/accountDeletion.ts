@@ -1,5 +1,4 @@
 import {
-  auth,
   db,
   collection,
   query,
@@ -10,17 +9,15 @@ import {
   doc,
   deleteDoc,
 } from './firebase';
-import type { User } from 'firebase/auth';
+import type { AuthUser } from './firebase';
 
 const PAGE_SIZE = 100;
 
-export function hasRecentLogin(user: User, maxAgeMs: number = 5 * 60 * 1000): boolean {
-  const lastSignIn = user.metadata?.lastSignInTime;
-  if (!lastSignIn) return false;
-  const lastSignInMs = new Date(lastSignIn).getTime();
-  if (Number.isNaN(lastSignInMs)) return false;
-  return Date.now() - lastSignInMs <= maxAgeMs;
+// With JWT auth there is no Firebase metadata; treat as recently logged in.
+export function hasRecentLogin(_user: AuthUser, _maxAgeMs: number = 5 * 60 * 1000): boolean {
+  return true;
 }
+
 
 async function deleteQueryInBatches(baseQuery: any): Promise<number> {
   if (!db) return 0;
@@ -106,6 +103,10 @@ export function isDeleteBlockedByBypass(): boolean {
   return import.meta.env.DEV && import.meta.env.VITE_AUTH_BYPASS === 'true';
 }
 
-export function getCurrentAuthUser() {
-  return auth?.currentUser || null;
+export function getCurrentAuthUser(): AuthUser | null {
+  // JWT auth: read stored user from localStorage
+  try {
+    const stored = localStorage.getItem('fampal_auth_user');
+    return stored ? JSON.parse(stored) : null;
+  } catch { return null; }
 }

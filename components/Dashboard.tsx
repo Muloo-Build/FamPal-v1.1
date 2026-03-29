@@ -44,7 +44,7 @@ import {
   deleteCircle,
 } from '../lib/circles';
 // import { ensurePartnerThread, fetchPartnerThreadState, savePartnerThreadFamilyPool, savePartnerThreadMemory, savePartnerThreadNote, savePartnerThreadPlace } from '../lib/partnerThreads';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from '../lib/firebase';
 import type { AppAccessContext } from '../lib/access';
 import { formatPriceLevel as formatPriceLevelUtil } from '../src/utils/priceLevel';
 // import ActivityDashboard from './ActivityDashboard';
@@ -1832,7 +1832,6 @@ const Dashboard: React.FC<DashboardProps> = ({ state, isGuest, accessContext, on
                 ) : (
                   <EmptyState type="no-results" query={searchQuery} onClearFilters={() => {
                     setSearchQuery('');
-                    setActiveFilters({});
                   }} />
                 )}
               </div>

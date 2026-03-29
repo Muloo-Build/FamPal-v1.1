@@ -1,5 +1,3 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { db, auth } from './firebase';
 import { AppState, UserPreferences, SavedLocation, ExploreIntent, getDefaultEntitlement } from '../types';
 import { saveUserField } from './userData';
 
@@ -38,9 +36,8 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 export async function loadUserProfile(userId: string): Promise<Partial<AppState> | null> {
   try {
-    const user = auth?.currentUser;
-    if (!user) return null;
-    const token = await user.getIdToken();
+    const token = localStorage.getItem('fampal_auth_token');
+    if (!token) return null;
     const res = await fetch(`${API_BASE}/api/user/${userId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -107,7 +104,11 @@ export function updatePreferenceDebounced(
 }
 
 async function flushPendingUpdates(): Promise<void> {
-  const userId = auth?.currentUser?.uid;
+  let userId: string | null = null;
+  try {
+    const stored = localStorage.getItem('fampal_auth_user');
+    userId = stored ? JSON.parse(stored)?.uid ?? null : null;
+  } catch { userId = null; }
   if (!userId || Object.keys(pendingUpdates).length === 0) {
     pendingUpdates = {};
     return;

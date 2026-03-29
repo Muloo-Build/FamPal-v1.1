@@ -26,8 +26,8 @@ import Profile from './components/Profile';
 import Onboarding from './components/Onboarding';
 import { AppState, User, getDefaultEntitlement, UserPreferences, SavedPlace, Preferences, Child, Pet, PartnerLink, ProfileInfo } from './types';
 import { getGuestPreferences, syncGuestPreferencesToUser } from './lib/profileSync';
-import type { User as FirebaseUser } from 'firebase/auth';
-import { Timestamp } from 'firebase/firestore';
+import type { AuthUser as FirebaseUser } from './lib/firebase';
+import { Timestamp } from './lib/firebase';
 import { shouldResetMonthlyAI, getNextResetDate, getCurrentUsageMonth } from './lib/entitlements';
 import { joinCircleByCode } from './lib/circles';
 import { buildAccessContext, type AppAccessContext } from './lib/access';
@@ -64,7 +64,7 @@ const summarizeAuthUser = (userAuth: FirebaseUser | null) => {
     isNull: false,
     uid: userAuth.uid,
     email: userAuth.email,
-    providers: (userAuth.providerData || []).map((provider) => provider.providerId),
+    providers: [],
   };
 };
 
@@ -349,9 +349,8 @@ const App: React.FC = () => {
     setState(prev => {
       const newState = { ...prev, [key]: value };
       
-      // Save to Firestore if user is logged in (not guest)
-      // Use auth.currentUser for more reliable UID access
-      const uid = auth?.currentUser?.uid || prev.user?.uid;
+      // Save to server if user is logged in (not guest)
+      const uid = prev.user?.uid;
       if (accessContext.canSyncCloud && uid) {
         // Centralised save via userData service
         if (key !== 'savedPlaces' && key !== 'partnerSharedPlaces' && key !== 'familyPool') {
@@ -581,8 +580,8 @@ const App: React.FC = () => {
   }, [authBypassEnabled, isGuest]);
 
   const handleOnboardingComplete = useCallback(async (result: OnboardingResult) => {
-    const uid = state.user?.uid || auth?.currentUser?.uid;
-    // Set ref immediately so Firestore listener won't loop back to onboarding
+    const uid = state.user?.uid;
+    // Set ref immediately so the listener won't loop back to onboarding
     onboardingJustCompletedRef.current = true;
     if (!uid) {
       setNeedsOnboarding(false);
@@ -691,7 +690,7 @@ const App: React.FC = () => {
     const isPaymentCallback = params.get('payment_callback') === 'true';
     const ref = params.get('ref');
     if (!isPaymentCallback || !ref) return;
-    const uid = auth?.currentUser?.uid || state.user?.uid;
+    const uid = state.user?.uid;
     if (!uid) return;
     (async () => {
       try {
@@ -714,7 +713,7 @@ const App: React.FC = () => {
     if (!BILLING_ENABLED) return;
     if (BILLING_PROVIDER !== 'play') return;
     if (!accessContext.canSyncCloud) return;
-    const uid = state.user?.uid || auth?.currentUser?.uid;
+    const uid = state.user?.uid;
     if (!uid) return;
     if (playSyncAttemptedRef.current === uid) return;
     playSyncAttemptedRef.current = uid;
@@ -758,7 +757,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!accessContext.canSyncCloud) return;
-    const uid = state.user?.uid || auth?.currentUser?.uid;
+    const uid = state.user?.uid;
     if (!uid) return;
     const unsub = listenToSavedPlaces(uid, (places) => {
       setSavedPlacesLoaded(true);
@@ -780,12 +779,8 @@ const App: React.FC = () => {
       return;
     }
     if (lastJoinCodeRef.current === code) return;
-    const uid = state.user?.uid || auth?.currentUser?.uid;
-    const currentUser = state.user || (auth?.currentUser ? {
-      uid: auth.currentUser.uid,
-      displayName: auth.currentUser.displayName,
-      email: auth.currentUser.email,
-    } : null);
+    const uid = state.user?.uid;
+    const currentUser = state.user || null;
     if (!uid || !currentUser) {
       localStorage.setItem(PENDING_JOIN_KEY, code);
       setView('login');
@@ -819,7 +814,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!accessContext.canSyncCloud) return;
-    const uid = state.user?.uid || auth?.currentUser?.uid;
+    const uid = state.user?.uid;
     if (!uid) return;
     const pendingCode = localStorage.getItem(PENDING_JOIN_KEY);
     if (pendingCode) {
@@ -833,7 +828,7 @@ const App: React.FC = () => {
     useEffect(() => {
       if (loading) return;
       if (!code) return;
-      if (state.user?.uid || auth?.currentUser?.uid) {
+      if (state.user?.uid) {
         consumeJoinCode(code);
       } else {
         localStorage.setItem(PENDING_JOIN_KEY, code);
@@ -845,7 +840,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!accessContext.canSyncCloud) return;
-    const uid = state.user?.uid || auth?.currentUser?.uid;
+    const uid = state.user?.uid;
     if (!uid) return;
     if (!savedPlacesLoaded) return;
     if (migrationAttemptedRef.current) return;

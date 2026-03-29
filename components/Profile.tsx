@@ -5,7 +5,7 @@ import { getLimits, getPlanDisplayName, canUseAI, isPaidTier } from '../lib/enti
 import { storage, auth, ref, uploadBytes, getDownloadURL, writeBatch } from '../lib/firebase';
 import type { AppAccessContext } from '../lib/access';
 import { googleProvider, signOut as firebaseSignOut } from '../lib/firebase';
-import { reauthenticateWithRedirect } from 'firebase/auth';
+import { reauthenticateWithRedirect } from '../lib/firebase';
 import {
   clearLocalAppState,
   deleteUserOwnedFirestoreData,
@@ -185,7 +185,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
     
     setUploadingProfilePic(true);
     try {
-      const fileName = `profile_pictures/${auth.currentUser.uid}/avatar_${Date.now()}`;
+      const fileName = `profile_pictures/${state.user?.uid}/avatar_${Date.now()}`;
       const storageRef = ref(storage, fileName);
       await uploadBytes(storageRef, file);
       const downloadUrl = await getDownloadURL(storageRef);
@@ -231,7 +231,7 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
       setDeleteError('Please type DELETE to confirm.');
       return;
     }
-    const authUser = auth?.currentUser;
+    const authUser = currentUser;
     if (!authUser || !hasRecentLogin(authUser)) {
       setRequiresReauthForDelete(true);
       setDeleteError('For security, please sign in again before deleting your account.');
@@ -255,8 +255,15 @@ const Profile: React.FC<ProfileProps> = ({ state, isGuest, accessContext, onSign
       await deleteUserOwnedFirestoreData(authUser.uid, { onLog: devLog });
       devLog('Firestore deletion complete');
 
-      await authUser.delete();
-      devLog('Firebase Auth user deleted');
+      // Delete account on server (JWT auth — no Firebase Auth delete needed)
+      const token = localStorage.getItem('fampal_auth_token');
+      if (token) {
+        await fetch(`${API_BASE}/api/user/me`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+      devLog('Server account deletion requested');
 
       await firebaseSignOut(auth).catch(() => {});
       clearLocalAppState();
