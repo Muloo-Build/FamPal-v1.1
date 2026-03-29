@@ -9,8 +9,10 @@ import {
   type PlaceRecord,
 } from './src/services/placeStore';
 
+// Always use relative URLs — frontend and backend share the same Railway domain.
+// VITE_API_BASE_URL is optional; relative paths work correctly on Railway.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const resolveApiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
+const resolveApiUrl = (path: string) => `${API_BASE}${path}`;
 const DENY_TYPES_ENV = import.meta.env.VITE_PLACES_DENY_TYPES || '';
 const DENY_BRANDS_ENV = import.meta.env.VITE_PLACES_DENY_BRANDS || '';
 const DENY_TYPES_STORAGE_KEY = 'fampal_places_deny_types';
@@ -90,9 +92,7 @@ const DEFAULT_DENY_BRANDS = [
   'builders warehouse',
 ];
 
-if (!API_BASE) {
-  console.error('[FamPal] CRITICAL: API base URL is missing! Places search requires server-side proxy.');
-}
+// Relative URLs resolve correctly on Railway (same domain). No guard needed.
 
 const PLACES_CACHE_KEY = 'fampal_google_places_cache';
 const DETAILS_CACHE_KEY = 'fampal_place_details_cache';
@@ -1111,7 +1111,7 @@ export async function textSearchPlacesPaged(
   options?: { signal?: AbortSignal }
 ): Promise<PlacesSearchResponse> {
   if (!query.trim()) return { places: [], nextPageToken: null, hasMore: false };
-  if (!API_BASE) return { places: [], nextPageToken: null, hasMore: false };
+
   const response = await fetchLegacyPlaces(
     '/api/places/text',
     {
@@ -1494,7 +1494,7 @@ export async function searchNearbyPlacesTextApi(
   pageToken?: string,
   options?: { useCache?: boolean; signal?: AbortSignal }
 ): Promise<PlacesSearchResponse> {
-  if (!API_BASE) return { places: [], nextPageToken: null, hasMore: false };
+
   if (searchQuery && searchQuery.trim()) {
     return textSearchPlacesPaged(searchQuery.trim(), lat, lng, radiusKm, pageToken, { signal: options?.signal });
   }
@@ -1533,7 +1533,7 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
     console.warn('[FamPal] Firestore cache check failed, falling back to API:', err);
   }
 
-  if (!API_BASE) return null;
+
 
   try {
     let response = await fetch(resolveApiUrl(`/api/places/details/${encodeURIComponent(placeId)}`));
