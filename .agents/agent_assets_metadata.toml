@@ -1,0 +1,55 @@
+uploads = []
+
+[[generated]]
+id = "9uptqLHdWqKREzzMt2rPS"
+uri = "file://artifacts/mockup-sandbox/public/images/fampal-bold-dark-park.png"
+type = "image"
+title = "Green point park dark mode"
+
+[[generated]]
+id = "bdPPbWLK0VXqu3L9NP8tr"
+uri = "file://artifacts/mockup-sandbox/public/images/fampal-bold-dark-aquarium.png"
+type = "image"
+title = "Two oceans aquarium dark mode"
+
+[[generated]]
+id = "5FpNI3de21pDCRU1vt-2Y"
+uri = "file://artifacts/mockup-sandbox/public/images/fampal-bold-dark-restaurant.png"
+type = "image"
+title = "Mojo market dark mode"
+
+[[outputs]]
+id = "ExACFJMaxR2acXEDZ1WBW"
+uri = "file://artifacts/mockup-sandbox/public/images/park-1.jpg"
+type = "image"
+title = "family friendly park, green grass, playground, sunny day, sunny"
+
+[[outputs]]
+id = "N5OSsKKB0XOegf7FPzRJN"
+uri = "file://artifacts/mockup-sandbox/public/images/restaurant-1.jpg"
+type = "image"
+title = "family friendly restaurant, cafe, clean, bright light"
+
+[[outputs]]
+id = "u4Dp2CWYTXs6WxvyHpO6o"
+uri = "file://artifacts/mockup-sandbox/public/images/museum-1.jpg"
+type = "image"
+title = "childrens museum, interactive exhibits, kids playing, bright colors"
+
+[[outputs]]
+id = "FzHDXqgtDo-FmU4fFnPUB"
+uri = "file://artifacts/mockup-sandbox/public/images/fp-park.jpg"
+type = "image"
+title = "sunny sunny park with kids playing, bright colors"
+
+[[outputs]]
+id = "Cji2mMeDfMe4R5q5zELmL"
+uri = "file://artifacts/mockup-sandbox/public/images/fp-cafe.jpg"
+type = "image"
+title = "family friendly cafe restaurant interior warm lighting"
+
+[[outputs]]
+id = "HS3LkPJNpOFXgWkz2Yl1h"
+uri = "file://artifacts/mockup-sandbox/public/images/fp-museum.jpg"
+type = "image"
+title = "children interactive museum exhibit colorful"
