@@ -1,58 +1,88 @@
 # FamPals - Parents Local Guide
 
 ## Overview
-FamPals is a React-based mobile application designed to help parents discover and plan family-friendly activities. It simplifies activity planning, leveraging AI-powered recommendations and social features to create personalized family adventures. The app aims to be a comprehensive local guide for finding, sharing, and organizing outings, enhancing family experiences, and creating lasting memories.
+FamPals is a mobile-first React app that helps parents discover and explore family-friendly venues nearby. Clean, minimal design — white backgrounds, teal accents, iOS-style aesthetic.
 
 ## User Preferences
-The user prefers iterative development and detailed explanations. The user wants the agent to ask before making major changes. The user actively develops in VS Code and pushes to GitHub - always check for upstream changes when starting a session.
+The user prefers iterative development and detailed explanations. Ask before making major architectural changes. The user actively develops in VS Code and pushes to GitHub.
+
+## Design System — Clean & Light (May 2026)
+- **Background**: `#f8fafc` (slate-50)
+- **Cards**: white, `rounded-3xl`, shadow `0_4px_24px_rgb(0,0,0,0.06)`
+- **Primary accent**: teal-600 `#0d9488` — buttons, active states, links
+- **Text primary**: slate-900 `#0f172a`
+- **Text muted**: slate-500 `#64748b`
+- **Border**: slate-100/slate-200
+- **Ratings**: amber-400/amber-50
+- **Saved/heart**: rose-500
+- **Success/open**: emerald
+- **Font**: system UI (`-apple-system, BlinkMacSystemFont, Segoe UI, Roboto`)
+- **Bottom nav**: white/90 backdrop-blur, teal active + bg-teal-50 pill
+- **Category chips**: teal-600 active, white border inactive
+- **Hero photo nav**: rounded-full dots, white/50 inactive, white active
 
 ## System Architecture
-The application is built with React 19, TypeScript, Vite 7, and Tailwind CSS v4. It features a mobile-first, responsive UI/UX with clear navigation. Firebase provides backend services for authentication and Firestore for data storage.
 
-**Key Features:**
--   **Authentication**: Google Sign-In and email/password authentication, including guest mode.
--   **Location Services**: Automatic geolocation with a radius slider for searches (1-200km).
--   **Profile Management**: User and child profiles, partner linking.
--   **AI Recommendations**: Utilizes Google Gemini API for personalized place recommendations based on user and child preferences (food, allergies, accessibility).
--   **Intent-first Explore**: Netflix-style layered refinement lenses with optional strict toggles for discovering places.
--   **Content Sharing**: One-tap sharing via WhatsApp and Google Calendar integration.
--   **Performance & Cost Optimization**: Aggressive caching (5-min TTL for places, intent cache), incremental result streaming, background pagination, abortable requests. Google Places API is primarily used for browsing/search, reserving Gemini for explicit "Ask AI" actions to optimize costs.
--   **Persistence**: User preferences (location, radius, category) persist across sessions via Firestore (logged-in) and localStorage (guests).
--   **Social Features**: Friend Circles for private groups and shared places; Partner Space for shared favorites and memories.
--   **Activity Tracking**: "My Activity" dashboard for tracking visited places, notes, and past outings.
--   **Accessibility, Family Facilities & Pet-Friendly**: Community-contributed and verified data for accessibility features, family facilities, and pet-friendly venue attributes, influencing ranking and filtering. Pet-friendly lens filter in Must Haves panel with chips: Dogs allowed, Pet-friendly patio, Water bowls, Off-leash area, Enclosed garden, Pets inside.
--   **Gamification**: FamPals Explorer system awards points and badges for user contributions (e.g., reports, reviews), tracked via levels and an activity dashboard. Weekly contribution streaks (currentStreakWeeks, bestStreakWeeks) with ISO week calculation. In-app nudge banner prompts inactive users (30+ days) to contribute, with 7-day dismissal cooldown.
--   **Place Owner Claim & Verification**: Two-sided marketplace allowing business owners to claim venues, submit verification evidence, and manage profiles. Admin review interface for approving/rejecting claims. Owner Dashboard with dynamic templates per ActivityType (restaurant, outdoor, kids, wine, etc.). Business Pro tier (R149/month) unlocks photo gallery, special offers, events, verified badge, and ranking boost.
--   **PWA Support**: Installable as a web app on iOS and Android.
+**Tech Stack:**
+- React 19 + TypeScript + Vite 7 + Tailwind CSS v4
+- Mobile-first responsive UI
 
-**Backend Components:**
--   Node.js/Express server (`server/index.ts`) for server-side logic.
--   Firebase Admin SDK for authentication and Firestore access.
--   Paystack integration for payments.
--   Google Places API proxy and OpenStreetMap Nominatim for location data.
+**Auth (JWT-based, not Firebase):**
+- `lib/firebase.ts` — custom JWT auth. Google Sign-In via Google Identity Services, email/password via custom API. Token stored in localStorage (`fampal_auth_token`), user in `fampal_auth_user`.
+- Key exports: `onAuthStateChanged`, `signInWithGoogle`, `signInWithEmailAndPassword`, `createUserWithEmailAndPassword`, `sendPasswordResetEmail`, `signOut`
+- Auth API endpoints: `POST /api/auth/google`, `POST /api/auth/login`, `POST /api/auth/signup`
 
-**Frontend Components:**
--   React 19 + TypeScript with Vite 7.
--   Tailwind CSS v4 for styling.
--   Firebase client SDK for auth and Firestore.
+**Data (Railway Postgres via REST API):**
+- `lib/userData.ts` — polling-based sync (10s). Key exports: `listenToSavedPlaces`, `upsertSavedPlace`, `deleteSavedPlace`, `listenToUserDoc`, `upsertUserProfile`, `saveUserField`
+- Saved places API: `GET/PUT/DELETE /api/user/me/saved-places/:placeId`
 
-**Data Strategy:**
--   **Community-first model**: User-contributed data (accessibility, family facilities, pet-friendly features, reports, verdicts) is prioritized and cached permanently in Firestore.
--   **Google Places as fallback**: Google Places API data fills gaps, cached in Firestore for 90 days. Uses `allowsDogs` field from Google Places API (Enterprise + Atmosphere SKU) for pet-friendly data. Also extracts pet-friendly signals from reviews and venue types.
--   **3-tier cache**: `localStorage` (60min) → Firestore shared cache (90 days / permanent) → Google Places API (last resort).
--   **Cost-effective**: Firestore reads are significantly cheaper than Google Places API calls, reducing dependency over time as community data grows.
+**Places:**
+- `GET /api/places/nearby?lat=&lng=&radius=&type=&keyword=` — Google Places nearby search
+- `GET /api/places/search?query=&lat=&lng=` — Text search
+- `GET /api/places/details/:placeId` — Place detail
+- `GET /api/places/photo?photoReference=&maxWidth=` — Photo proxy
+- Returns standard Google Places API JSON shape
 
-**Brand & Design System (Feb 2026):**
--   **Primary Brand Colors**: Purple gradient (#A855F7 → #D946EF → #EC4899), dark backgrounds (#0F0A2A → #2D1B69), orange accent (#F97316).
--   **UI Color Rules**: Primary CTAs use purple gradient (from-purple-500 to-fuchsia-500). Favorites/hearts use pink (#EC4899/pink-500). Toggles use bg-purple-500 (active) / bg-slate-300 (inactive) with white knob. Keep sky/blue ONLY for contextual info (phone, website, location info icons in VenueProfile). Amber for warnings/pet-friendly, emerald for success, rose for errors/delete.
--   **Dark Mode**: Supported via html.dark class with comprehensive CSS overrides in index.css for all brand colors including purple, pink, fuchsia variants.
--   **Logos**: Dual-variant system - dark variant (purple bg rounded rect) for dark backgrounds (Login), light variant (transparent gradient F) for white backgrounds (Header). Both use unique SVG gradient IDs via React useId().
+**Server:**
+- `server/index.ts` — Express on port 8080. Proxied via Vite dev server on port 5000.
+
+## File Structure
+
+```
+App.tsx                      — Auth-aware router (5 routes)
+index.tsx                    — Entry point (BrowserRouter + React root)
+types.ts                     — Shared types: AuthUser, Venue, VenueDetail, SavedPlace
+index.html                   — PWA meta, Google GSI script
+src/
+  index.css                  — Tailwind v4 + scrollbar-hide + animations
+  screens/
+    Login.tsx                — Welcome + Google + Email/Password + guest mode
+    Explore.tsx              — Home: sticky header, search, category chips, venue cards
+    VenueDetail.tsx          — Photo gallery, details, contact, save/share
+    Saved.tsx                — Saved places list with delete
+    Profile.tsx              — User info, settings, sign out
+  components/
+    BottomNav.tsx            — 3-tab nav: Explore / Saved / Profile
+    VenueCard.tsx            — Card with photo, category badge, rating, distance, heart
+lib/
+  firebase.ts                — JWT auth (keep as-is)
+  userData.ts                — API data sync (keep as-is)
+server/
+  index.ts                   — Express API server (keep as-is)
+```
+
+## Key Behaviours
+- Guest mode: can browse Explore and Venue Detail, cannot save. Prompted to sign in.
+- Location: browser geolocation on load, defaults to Cape Town (-33.9249, 18.4241) on failure.
+- Category search maps to Google Places `type` + `keyword` params.
+- Radius slider (1–50km) in header, persists during session.
+- Search is debounced 500ms, uses `/api/places/search` endpoint.
+- Photos: `/api/places/photo?photoReference=xxx&maxWidth=600` (VenueCard), `maxWidth=800` (detail).
+- Distance calculated client-side via Haversine formula.
+- Saved places: optimistic UI (update local state immediately, sync to server async).
 
 ## External Dependencies
--   **Firebase**: User authentication (Google Sign-In, email/password), Firestore database, Firebase App Hosting.
--   **Google Gemini API**: AI-driven place recommendations.
--   **Google Places API**: Browsing, searching, and detailed location information.
--   **Paystack**: Payment processing for premium plans.
--   **OpenStreetMap Nominatim**: Reverse geocoding and enriching place data with accessibility/family facility/pet-friendly tags.
--   **WhatsApp**: Sharing place details.
--   **Google Calendar**: Adding planned activities.
+- **Google Places API**: Venue search, details, photos (proxied via Express server)
+- **Google Identity Services**: OAuth sign-in (`accounts.google.com/gsi/client`)
+- **Railway Postgres**: User data, saved places (via REST API, JWT auth)
+- **Paystack**: Payment processing (server-side, not used in new UI yet)
