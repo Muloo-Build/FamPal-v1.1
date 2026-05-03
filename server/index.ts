@@ -2045,8 +2045,13 @@ async function searchNearbyNew(opts: {
     headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': NEW_PLACES_FIELD_MASK },
     body: JSON.stringify(body),
   });
-  if (!response.ok) { console.error('searchNearbyNew failed', response.status); return []; }
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    console.error('[Places] searchNearbyNew failed', response.status, errBody?.error?.reason || errBody?.error?.message || '');
+    return [];
+  }
   const data = await response.json();
+  console.log('[Places] searchNearbyNew ok, got', (data.places || []).length, 'places');
   return (data.places || []).map(transformNewPlace);
 }
 
@@ -2063,8 +2068,13 @@ async function searchTextNew(opts: {
     headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': NEW_PLACES_FIELD_MASK },
     body: JSON.stringify(body),
   });
-  if (!response.ok) { console.error('searchTextNew failed', response.status); return []; }
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    console.error('[Places] searchTextNew failed', response.status, errBody?.error?.reason || errBody?.error?.message || '');
+    return [];
+  }
   const data = await response.json();
+  console.log('[Places] searchTextNew ok, got', (data.places || []).length, 'places');
   return (data.places || []).map(transformNewPlace);
 }
 
