@@ -28,24 +28,21 @@ export default function LoginScreen({ onGuest }: Props) {
   // Render Google's official button into the ref div — reliable on all browsers
   useEffect(() => {
     if (mode !== 'welcome') return;
+    let cancelled = false;
 
     const tryRender = () => {
       const container = googleBtnRef.current;
-      if (!container) return false;
+      if (!container || cancelled) return false;
       const g = (window as any).google;
       if (!g?.accounts?.id) return false;
 
-      // Clear any previous render
+      // Clear any previous render to avoid duplicate initializations
       container.innerHTML = '';
 
       renderGoogleSignInButton(
         container,
-        () => {
-          // onSuccess — auth state will update via onAuthStateChanged
-        },
-        (err) => {
-          setError(err.message || 'Google sign-in failed');
-        },
+        () => { /* onSuccess — auth state updates via onAuthStateChanged */ },
+        (err) => { if (!cancelled) setError(err.message || 'Google sign-in failed'); },
       );
       return true;
     };
@@ -55,8 +52,9 @@ export default function LoginScreen({ onGuest }: Props) {
       const interval = setInterval(() => {
         if (tryRender()) clearInterval(interval);
       }, 200);
-      return () => clearInterval(interval);
+      return () => { cancelled = true; clearInterval(interval); };
     }
+    return () => { cancelled = true; };
   }, [mode]);
 
   const handleEmailSignIn = async (e: React.FormEvent) => {

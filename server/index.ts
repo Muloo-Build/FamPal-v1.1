@@ -226,6 +226,12 @@ app.get('/health', (_req, res) => {
   res.status(200).send('OK');
 });
 
+app.get('/api/config', (_req, res) => {
+  res.json({
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  });
+});
+
 const replitDomains = process.env.REPLIT_DOMAINS?.split(',').map((domain) => domain.trim()).filter(Boolean) ?? [];
 const replitOrigins = replitDomains.map((domain) => `https://${domain}`);
 const configuredProdOrigin = (process.env.FRONTEND_PRODUCTION_ORIGIN || '').trim();

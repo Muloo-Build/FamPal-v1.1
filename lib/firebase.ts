@@ -70,14 +70,31 @@ async function exchangeToken(endpoint: string, body: Record<string, string>): Pr
   return user;
 }
 
+// Fetch Google Client ID from the server at runtime (works in all environments)
+let _googleClientId: string | null = null;
+async function getGoogleClientId(): Promise<string> {
+  if (_googleClientId) return _googleClientId;
+  // Fall back to build-time env var if available
+  const buildTimeId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+  if (buildTimeId) { _googleClientId = buildTimeId; return buildTimeId; }
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.googleClientId) { _googleClientId = data.googleClientId; return data.googleClientId; }
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
 // Renders Google's official sign-in button into a container element.
 // More reliable than prompt() which can be suppressed by browsers.
-export function renderGoogleSignInButton(
+export async function renderGoogleSignInButton(
   container: HTMLElement,
   onSuccess: (user: AuthUser) => void,
   onError: (err: Error) => void,
-): void {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+): Promise<void> {
+  const clientId = await getGoogleClientId();
   if (!clientId) {
     onError(new Error('Google sign-in is not configured. Please use email/password.'));
     return;
