@@ -751,6 +751,7 @@ function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> 
     placeId: row.place_id,
     name: payload.name || row.place_name || 'Saved place',
     address: payload.address || row.formatted_address || '',
+    photoReference: payload.photoReference || null,
     imageUrl: toProxyPhotoUrl(payload.imageUrl || placeRaw.photoUrl || null),
     mapsUrl: payload.mapsUrl || placeRaw.mapsUrl || placeRaw.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${row.place_id}`,
     rating: payload.rating ?? row.rating ?? placeRaw.rating,
@@ -759,6 +760,8 @@ function mapPostgresSavedPlace(row: PostgresSavedPlaceRow): Record<string, any> 
     type: payload.type || placeRaw.type,
     description: payload.description || placeRaw.description,
     savedAt: toIsoString(row.saved_at),
+    placeTags: (row as any).place_tags || [],
+    privateNotes: (row as any).private_notes || null,
   }) as Record<string, any>;
 }
 
@@ -771,6 +774,8 @@ async function listSavedPlaces(userId: string): Promise<Record<string, any>[]> {
           usp.place_id,
           usp.saved_at,
           usp.payload,
+          usp.place_tags,
+          usp.private_notes,
           p.name as place_name,
           p.formatted_address,
           p.rating,
@@ -833,15 +838,19 @@ async function upsertSavedPlaceData(userId: string, place: Record<string, any>):
       ],
     );
 
+    const newPlaceTags = Array.isArray(data.placeTags) ? data.placeTags : null;
+    const newPrivateNotes = typeof data.privateNotes === 'string' ? data.privateNotes : null;
     await pgQuery(
       `
-        insert into user_saved_places (user_id, place_id, payload, saved_at)
-        values ($1, $2, $3::jsonb, $4::timestamptz)
+        insert into user_saved_places (user_id, place_id, payload, saved_at, place_tags, private_notes)
+        values ($1, $2, $3::jsonb, $4::timestamptz, $5, $6)
         on conflict (user_id, place_id) do update
         set payload = excluded.payload,
-            saved_at = excluded.saved_at
+            saved_at = excluded.saved_at,
+            place_tags = coalesce(excluded.place_tags, user_saved_places.place_tags),
+            private_notes = coalesce(excluded.private_notes, user_saved_places.private_notes)
       `,
-      [userId, placeId, JSON.stringify(data), savedAtIso],
+      [userId, placeId, JSON.stringify(data), savedAtIso, newPlaceTags, newPrivateNotes],
     );
     return;
   }
@@ -3997,6 +4006,24 @@ app.delete('/api/user/me/saved-places/:placeId', requireAuth, async (req: Authen
   } catch (err: any) {
     console.error('[FamPal API] Failed to delete saved place:', err?.message || err);
     return res.status(500).json({ error: 'Failed to delete saved place' });
+  }
+});
+
+app.patch('/api/user/me/saved-places/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.uid!;
+    const placeId = String(req.params.placeId || '').trim();
+    if (!placeId) return res.status(400).json({ error: 'placeId is required' });
+    if (!isPostgresEnabled) return res.status(503).json({ error: 'Database unavailable' });
+    const { placeTags, privateNotes } = req.body || {};
+    await pgQuery(
+      `UPDATE user_saved_places SET place_tags = $3, private_notes = $4 WHERE user_id = $1 AND place_id = $2`,
+      [userId, placeId, Array.isArray(placeTags) ? placeTags : [], typeof privateNotes === 'string' ? privateNotes : null]
+    );
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[FamPal API] Failed to patch saved place:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to update saved place' });
   }
 });
 

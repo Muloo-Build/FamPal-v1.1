@@ -170,6 +170,18 @@ export async function upsertSavedPlace(uid: string, place: SavedPlace): Promise<
   });
 }
 
+export async function patchSavedPlace(
+  uid: string,
+  placeId: string,
+  patch: { placeTags?: string[]; privateNotes?: string },
+): Promise<void> {
+  if (DEV_AUTH_BYPASS) return;
+  await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(placeId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function deleteSavedPlace(uid: string, placeId: string): Promise<void> {
   if (DEV_AUTH_BYPASS) return;
   await apiRequest(uid, `/api/user/me/saved-places/${encodeURIComponent(placeId)}`, {

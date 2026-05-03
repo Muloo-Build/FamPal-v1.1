@@ -41,6 +41,8 @@ export interface SavedPlace {
   photoReference?: string;
   category?: string;
   savedAt: string;
+  placeTags?: string[];
+  privateNotes?: string;
 }
 
 export interface PlaceReview {

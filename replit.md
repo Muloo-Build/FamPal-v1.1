@@ -80,6 +80,26 @@ server/
   index.ts                   — Express API server (keep as-is)
 ```
 
+## Place Tags & Private Notes
+- `PLACE_TAGS` exported from `src/screens/VenueDetail.tsx`: Favourite ⭐, Been there loved it ✅, Date night 🌙, Family outing 👨‍👩‍👧, Want to visit 📌, Not for me 👎
+- When saving a place for the first time, a bottom sheet slides up to let user tag + add a private note
+- Tag button (🏷️) in header re-opens the sheet on saved places
+- Private notes are amber-styled, edit-in-place, only visible to the owner
+- `patchSavedPlace` in `lib/userData.ts` calls `PATCH /api/user/me/saved-places/:placeId` to update tags/notes without changing save time
+- DB: `user_saved_places.place_tags TEXT[]` + `user_saved_places.private_notes TEXT` (migrated)
+
+## Saved Screen
+- Filter tabs row at top: All + one tab per tag that has at least 1 place (with counts)
+- Saved place cards show tag badges + italic private note preview
+- Hover reveals pencil (edit tags/notes) and heart (unsave) action buttons
+- Import `PLACE_TAGS` from `src/screens/VenueDetail.tsx`
+
+## Attributes Section (VenueDetail "Why it works for families")
+- Replaces flat badge row with expandable per-attribute cards
+- Kid Friendly: lists "Good for children" + "Children's menu available" if `menuForChildren`
+- Wheelchair Accessible: lists specific sub-options (entrance, parking, restrooms, seating) from `accessibilityOptions`
+- Dog Friendly, Outdoor Seating, Restrooms also shown with plain-language reasons
+
 ## Key Behaviours
 - Guest mode: can browse Explore and Venue Detail, cannot save. Prompted to sign in.
 - Location: browser geolocation on load, defaults to Cape Town (-33.9249, 18.4241) on failure.
