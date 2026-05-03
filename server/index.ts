@@ -1999,6 +1999,85 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Places API (New) helpers ──────────────────────────────────────────────────
+const NEW_PLACES_FIELD_MASK = [
+  'places.id', 'places.displayName', 'places.formattedAddress',
+  'places.shortFormattedAddress', 'places.location', 'places.rating',
+  'places.userRatingCount', 'places.photos', 'places.types',
+  'places.currentOpeningHours', 'places.priceLevel',
+].join(',');
+
+function priceLevelToNumber(level?: string): number | undefined {
+  const map: Record<string, number> = {
+    PRICE_LEVEL_FREE: 0, PRICE_LEVEL_INEXPENSIVE: 1,
+    PRICE_LEVEL_MODERATE: 2, PRICE_LEVEL_EXPENSIVE: 3, PRICE_LEVEL_VERY_EXPENSIVE: 4,
+  };
+  return level ? map[level] : undefined;
+}
+
+// Transform new Places API place object → legacy shape expected by frontend
+function transformNewPlace(p: any): any {
+  return {
+    place_id: p.id,
+    name: p.displayName?.text || '',
+    geometry: { location: { lat: p.location?.latitude ?? 0, lng: p.location?.longitude ?? 0 } },
+    vicinity: p.shortFormattedAddress || p.formattedAddress || '',
+    formatted_address: p.formattedAddress || '',
+    rating: p.rating,
+    user_ratings_total: p.userRatingCount,
+    types: p.types || [],
+    photos: (p.photos || []).map((ph: any) => ({ photo_reference: ph.name })),
+    opening_hours: p.currentOpeningHours ? { open_now: p.currentOpeningHours.openNow } : undefined,
+    price_level: priceLevelToNumber(p.priceLevel),
+  };
+}
+
+async function searchNearbyNew(opts: {
+  lat: number; lng: number; radiusMeters: number; includedTypes?: string[];
+}): Promise<any[]> {
+  const body: any = {
+    locationRestriction: { circle: { center: { latitude: opts.lat, longitude: opts.lng }, radius: opts.radiusMeters } },
+    maxResultCount: 20,
+  };
+  if (opts.includedTypes?.length) body.includedTypes = opts.includedTypes;
+  const response = await fetchWithTimeout('https://places.googleapis.com/v1/places:searchNearby', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': NEW_PLACES_FIELD_MASK },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) { console.error('searchNearbyNew failed', response.status); return []; }
+  const data = await response.json();
+  return (data.places || []).map(transformNewPlace);
+}
+
+async function searchTextNew(opts: {
+  query: string; lat: number; lng: number; radiusMeters: number;
+}): Promise<any[]> {
+  const body = {
+    textQuery: opts.query,
+    locationBias: { circle: { center: { latitude: opts.lat, longitude: opts.lng }, radius: opts.radiusMeters } },
+    maxResultCount: 20,
+  };
+  const response = await fetchWithTimeout('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': NEW_PLACES_FIELD_MASK },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) { console.error('searchTextNew failed', response.status); return []; }
+  const data = await response.json();
+  return (data.places || []).map(transformNewPlace);
+}
+
+// Type map: app category → new Places API includedTypes
+const CATEGORY_TYPE_MAP: Record<string, string[]> = {
+  park: ['park', 'national_park', 'hiking_area'],
+  restaurant: ['restaurant', 'cafe', 'fast_food_restaurant'],
+  museum: ['museum', 'art_gallery'],
+  beach: ['beach'],
+  playground: ['playground', 'amusement_park'],
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 function normalizeType(value: string): string {
   return value.toLowerCase().replace(/\s+/g, '_').trim();
 }
@@ -2201,47 +2280,16 @@ const placesPhotoRateLimit = createIpRateLimiter({ windowMs: 60_000, max: 180, l
 
 app.get('/api/places/nearby', placesSearchRateLimit, createJsonCache(PLACES_SEARCH_CACHE_TTL_MS, 'places_nearby'), async (req, res) => {
   try {
-    if (!GOOGLE_PLACES_API_KEY) {
-      return res.status(500).json({ error: 'Places API not configured' });
-    }
+    if (!GOOGLE_PLACES_API_KEY) return res.status(500).json({ error: 'Places API not configured' });
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'Missing or invalid lat/lng' });
-    }
-    const radiusKm = Number(req.query.radiusKm || 10);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Missing or invalid lat/lng' });
+    const radiusKm = Number(req.query.radiusKm || req.query.radius ? Number(req.query.radius) / 1000 : 10);
     const radiusMeters = Math.min(Math.max(radiusKm, 0.1) * 1000, 50000);
-    const pageToken = typeof req.query.pageToken === 'string' ? req.query.pageToken : undefined;
     const typeParam = typeof req.query.type === 'string' ? req.query.type : undefined;
-    const legacyType = resolveLegacyType(typeParam);
-
-    const params = new URLSearchParams({
-      key: GOOGLE_PLACES_API_KEY,
-      location: `${lat},${lng}`,
-      radius: `${radiusMeters}`,
-    });
-    if (legacyType) {
-      params.set('type', legacyType);
-    }
-    if (pageToken) {
-      params.set('pagetoken', pageToken);
-    }
-
-    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?${params.toString()}`;
-    const response = await fetchWithTimeout(url);
-    const data = await response.json();
-
-    if (data.status === 'INVALID_REQUEST' && pageToken) {
-      return res.status(409).json({ error: 'page_token_not_ready' });
-    }
-    if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      return res.status(400).json({ error: data.error_message || data.status, status: data.status });
-    }
-    return res.json({
-      results: data.results || [],
-      nextPageToken: data.next_page_token || null,
-      hasMore: !!data.next_page_token,
-    });
+    const includedTypes = typeParam ? (CATEGORY_TYPE_MAP[typeParam] || [typeParam]) : [];
+    const results = await searchNearbyNew({ lat, lng, radiusMeters, includedTypes: includedTypes.length ? includedTypes : undefined });
+    return res.json({ results, nextPageToken: null, hasMore: false });
   } catch (error) {
     console.error('Places nearby error:', (error as any)?.name || 'unknown_error');
     return res.status(500).json({ error: 'Places search failed' });
@@ -2250,47 +2298,16 @@ app.get('/api/places/nearby', placesSearchRateLimit, createJsonCache(PLACES_SEAR
 
 app.get('/api/places/text', placesSearchRateLimit, createJsonCache(PLACES_SEARCH_CACHE_TTL_MS, 'places_text'), async (req, res) => {
   try {
-    if (!GOOGLE_PLACES_API_KEY) {
-      return res.status(500).json({ error: 'Places API not configured' });
-    }
+    if (!GOOGLE_PLACES_API_KEY) return res.status(500).json({ error: 'Places API not configured' });
     const query = typeof req.query.query === 'string' ? req.query.query.trim() : '';
-    if (!query) {
-      return res.status(400).json({ error: 'Missing query' });
-    }
+    if (!query) return res.status(400).json({ error: 'Missing query' });
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'Missing or invalid lat/lng' });
-    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Missing or invalid lat/lng' });
     const radiusKm = Number(req.query.radiusKm || 10);
     const radiusMeters = Math.min(Math.max(radiusKm, 0.1) * 1000, 50000);
-    const pageToken = typeof req.query.pageToken === 'string' ? req.query.pageToken : undefined;
-
-    const params = new URLSearchParams({
-      key: GOOGLE_PLACES_API_KEY,
-      query: `${query} family friendly`,
-      location: `${lat},${lng}`,
-      radius: `${radiusMeters}`,
-    });
-    if (pageToken) {
-      params.set('pagetoken', pageToken);
-    }
-
-    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
-    const response = await fetchWithTimeout(url);
-    const data = await response.json();
-
-    if (data.status === 'INVALID_REQUEST' && pageToken) {
-      return res.status(409).json({ error: 'page_token_not_ready' });
-    }
-    if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      return res.status(400).json({ error: data.error_message || data.status, status: data.status });
-    }
-    return res.json({
-      results: data.results || [],
-      nextPageToken: data.next_page_token || null,
-      hasMore: !!data.next_page_token,
-    });
+    const results = await searchTextNew({ query: `${query} family friendly`, lat, lng, radiusMeters });
+    return res.json({ results, nextPageToken: null, hasMore: false });
   } catch (error) {
     console.error('Places text search error:', (error as any)?.name || 'unknown_error');
     return res.status(500).json({ error: 'Places search failed' });
@@ -2299,45 +2316,18 @@ app.get('/api/places/text', placesSearchRateLimit, createJsonCache(PLACES_SEARCH
 
 app.get('/api/places/search', placesSearchRateLimit, createJsonCache(PLACES_SEARCH_CACHE_TTL_MS, 'places_search'), async (req, res) => {
   try {
-    if (!GOOGLE_PLACES_API_KEY) {
-      return res.status(500).json({ error: 'Places API not configured' });
-    }
+    if (!GOOGLE_PLACES_API_KEY) return res.status(500).json({ error: 'Places API not configured' });
     const query = typeof req.query.q === 'string'
       ? req.query.q.trim()
       : (typeof req.query.query === 'string' ? req.query.query.trim() : '');
-    if (!query) {
-      return res.status(400).json({ error: 'Missing query' });
-    }
+    if (!query) return res.status(400).json({ error: 'Missing query' });
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'Missing or invalid lat/lng' });
-    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Missing or invalid lat/lng' });
     const radiusKm = Number(req.query.radiusKm || 10);
     const radiusMeters = Math.min(Math.max(radiusKm, 0.1) * 1000, 50000);
-    const pageToken = typeof req.query.pageToken === 'string' ? req.query.pageToken : undefined;
-
-    const params = new URLSearchParams({
-      key: GOOGLE_PLACES_API_KEY,
-      query: `${query} family friendly`,
-      location: `${lat},${lng}`,
-      radius: `${radiusMeters}`,
-    });
-    if (pageToken) params.set('pagetoken', pageToken);
-
-    const response = await fetchWithTimeout(`https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`);
-    const data = await response.json();
-    if (data.status === 'INVALID_REQUEST' && pageToken) {
-      return res.status(409).json({ error: 'page_token_not_ready' });
-    }
-    if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      return res.status(400).json({ error: data.error_message || data.status, status: data.status });
-    }
-    return res.json({
-      results: data.results || [],
-      nextPageToken: data.next_page_token || null,
-      hasMore: !!data.next_page_token,
-    });
+    const results = await searchTextNew({ query: `${query} family friendly`, lat, lng, radiusMeters });
+    return res.json({ results, nextPageToken: null, hasMore: false });
   } catch (error) {
     console.error('Places search error:', (error as any)?.name || 'unknown_error');
     return res.status(500).json({ error: 'Places search failed' });
@@ -2346,15 +2336,11 @@ app.get('/api/places/search', placesSearchRateLimit, createJsonCache(PLACES_SEAR
 
 app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEARCH_CACHE_TTL_MS, 'places_intent'), async (req, res) => {
   try {
-    if (!GOOGLE_PLACES_API_KEY) {
-      return res.status(500).json({ error: 'Places API not configured' });
-    }
+    if (!GOOGLE_PLACES_API_KEY) return res.status(500).json({ error: 'Places API not configured' });
     const intent = (typeof req.query.intent === 'string' ? req.query.intent : 'all') as ExploreIntentId;
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'Missing or invalid lat/lng' });
-    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Missing or invalid lat/lng' });
     const radiusKm = Number(req.query.radiusKm || 10);
     const radiusMeters = Math.min(Math.max(radiusKm, 0.1) * 1000, 50000);
     const searchQuery = typeof req.query.searchQuery === 'string' ? req.query.searchQuery.trim() : '';
@@ -2363,93 +2349,30 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
       new Set((searchQuery ? [searchQuery, ...definition.queries.slice(0, 2)] : definition.queries).map((q) => q.toLowerCase().trim()))
     );
 
-    const dedupeMap = new Map<string, any>();
-    const perQueryCounts: Record<string, { pagesFetched: number; fetchedResults: number; uniqueAdded: number }> = {};
-
     console.log(`[FamPal API] Explore intent selected: ${intent}`);
     console.log(`[FamPal API] Intent queries executed: ${queries.join(', ')}`);
 
-    for (const query of queries) {
-      let nextPageToken: string | undefined = undefined;
-      let hasMore = true;
-      let page = 1;
-      let fetchedResults = 0;
+    const dedupeMap = new Map<string, any>();
+    const perQueryCounts: Record<string, { fetchedResults: number; uniqueAdded: number }> = {};
+
+    // Run all intent queries in parallel using the new Places API
+    await Promise.all(queries.map(async (query) => {
       const beforeUnique = dedupeMap.size;
-
-      while (page <= 3 && hasMore) {
-        if (page > 1) {
-          await sleep(2000);
-        }
-
-        const params = new URLSearchParams({
-          key: GOOGLE_PLACES_API_KEY,
-          query: query,
-          location: `${lat},${lng}`,
-          radius: `${radiusMeters}`,
-        });
-        if (nextPageToken) {
-          params.set('pagetoken', nextPageToken);
-        }
-
-        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
-        const response = await fetchWithTimeout(url);
-        const data = await response.json();
-
-        if (data.status === 'INVALID_REQUEST' && nextPageToken) {
-          await sleep(2000);
-          continue;
-        }
-        if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-          console.warn('[FamPal API] Intent text search warning:', data.status, data.error_message || '');
-          break;
-        }
-
-        const results = Array.isArray(data.results) ? data.results : [];
-        fetchedResults += results.length;
-        for (const result of results) {
-          const placeId = result?.place_id || result?.id;
-          if (!placeId) continue;
-          dedupeMap.set(placeId, result);
-        }
-
-        const mergedResults = Array.from(dedupeMap.values());
-        const filtered = mergedResults.filter((place) => {
-          const types = (Array.isArray(place?.types) ? place.types : []).map((t: string) => normalizeType(t));
-          const typeSet = new Set(types);
-          const text = `${place?.name || ''} ${place?.formatted_address || ''}`.toLowerCase();
-          const includeTypes = definition.includeTypes.map(normalizeType);
-          const excludeTypes = definition.excludeTypes.map(normalizeType);
-
-          if (includesAny(text, definition.keywordExclude)) return false;
-          if (excludeTypes.some((type) => typeSet.has(type))) return false;
-          if (includeTypes.length === 0) return true;
-          if (includeTypes.some((type) => typeSet.has(type))) return true;
-          return includesAny(text, definition.keywordInclude);
-        });
-
-        perQueryCounts[query] = {
-          pagesFetched: page,
-          fetchedResults,
-          uniqueAdded: dedupeMap.size - beforeUnique,
-        };
-
-        console.log(`[FamPal API] Query "${query}" page ${page}: ${results.length} results, hasMore: ${!!data.next_page_token}`);
-        console.log(`[FamPal API] Merge count after "${query}" page ${page}: ${mergedResults.length} before filter, ${filtered.length} after filter`);
-
-        nextPageToken = data.next_page_token || undefined;
-        hasMore = !!nextPageToken;
-        page += 1;
+      const results = await searchTextNew({ query, lat, lng, radiusMeters });
+      for (const place of results) {
+        const placeId = place?.place_id;
+        if (placeId && !dedupeMap.has(placeId)) dedupeMap.set(placeId, place);
       }
-    }
+      perQueryCounts[query] = { fetchedResults: results.length, uniqueAdded: dedupeMap.size - beforeUnique };
+    }));
 
     const mergedResults = Array.from(dedupeMap.values());
     const filteredResults = mergedResults.filter((place) => {
       const types = (Array.isArray(place?.types) ? place.types : []).map((t: string) => normalizeType(t));
       const typeSet = new Set(types);
-      const text = `${place?.name || ''} ${place?.formatted_address || ''}`.toLowerCase();
+      const text = `${place?.name || ''} ${place?.formatted_address || place?.vicinity || ''}`.toLowerCase();
       const includeTypes = definition.includeTypes.map(normalizeType);
       const excludeTypes = definition.excludeTypes.map(normalizeType);
-
       if (includesAny(text, definition.keywordExclude)) return false;
       if (excludeTypes.some((type) => typeSet.has(type))) return false;
       if (includeTypes.length === 0) return true;
@@ -2464,14 +2387,7 @@ app.get('/api/places/intent', placesSearchRateLimit, createJsonCache(PLACES_SEAR
       results: filteredResults,
       hasMore: false,
       nextPageToken: null,
-      debug: {
-        intent,
-        subtitle: definition.subtitle,
-        queriesRun: queries,
-        perQueryCounts,
-        totalBeforeFilter: mergedResults.length,
-        totalAfterFilter: filteredResults.length,
-      },
+      debug: { intent, subtitle: definition.subtitle, queriesRun: queries, perQueryCounts, totalBeforeFilter: mergedResults.length, totalAfterFilter: filteredResults.length },
     });
   } catch (error) {
     console.error('Places intent search error:', (error as any)?.name || 'unknown_error');
@@ -2544,11 +2460,19 @@ app.get('/api/places/photo', placesPhotoRateLimit, async (req, res) => {
     const maxWidth = Number(req.query.maxWidth || 600);
     const maxHeight = Number(req.query.maxHeight || 400);
 
+    const wPx = Math.min(Math.max(maxWidth, 64), 1600);
+    const hPx = Math.min(Math.max(maxHeight, 64), 1600);
     let targetUrl = '';
-    if (photoName) {
-      targetUrl = `https://places.googleapis.com/v1/${encodeURIComponent(photoName)}/media?maxHeightPx=${Math.min(Math.max(maxHeight, 64), 1600)}&maxWidthPx=${Math.min(Math.max(maxWidth, 64), 1600)}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
+    // New Places API photo name looks like: places/{id}/photos/{ref}
+    const isNewApiRef = (s: string) => s.startsWith('places/');
+    if (photoName && isNewApiRef(photoName)) {
+      targetUrl = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=${hPx}&maxWidthPx=${wPx}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
+    } else if (photoReference && isNewApiRef(photoReference)) {
+      targetUrl = `https://places.googleapis.com/v1/${photoReference}/media?maxHeightPx=${hPx}&maxWidthPx=${wPx}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
+    } else if (photoName) {
+      targetUrl = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=${hPx}&maxWidthPx=${wPx}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
     } else if (photoReference) {
-      targetUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${Math.min(Math.max(maxWidth, 64), 1600)}&photo_reference=${encodeURIComponent(photoReference)}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
+      targetUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${wPx}&photo_reference=${encodeURIComponent(photoReference)}&key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}`;
     } else {
       return res.status(400).json({ error: 'Missing photoName or photoReference' });
     }
