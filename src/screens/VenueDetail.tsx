@@ -9,6 +9,8 @@ import {
 import type { AuthUser } from '../../lib/firebase';
 import type { SavedPlace, PlaceReview, GoogleReview } from '../../types';
 import { listenToSavedPlaces, upsertSavedPlace, deleteSavedPlace, patchSavedPlace } from '../../lib/userData';
+import { addRecentlyViewed } from '../../lib/recentlyViewed';
+import { PLACE_TAGS } from '../constants/placeTags';
 
 interface Props { user: AuthUser | null; }
 
@@ -88,15 +90,6 @@ function mapPlaceResponse(data: any, placeId: string): DetailVenue {
   };
 }
 
-// ── Place Tags ────────────────────────────────────────────────────────────────
-export const PLACE_TAGS = [
-  { id: 'favourite',      label: 'Favourite',           emoji: '⭐' },
-  { id: 'been_loved',    label: 'Been there, loved it', emoji: '✅' },
-  { id: 'date_night',    label: 'Date night',           emoji: '🌙' },
-  { id: 'family_outing', label: 'Family outing',        emoji: '👨‍👩‍👧' },
-  { id: 'want_to_visit', label: 'Want to visit',        emoji: '📌' },
-  { id: 'not_for_me',   label: 'Not for me',            emoji: '👎' },
-];
 
 // ── Review Tags ───────────────────────────────────────────────────────────────
 const REVIEW_TAGS = [
@@ -596,6 +589,18 @@ export default function VenueDetailScreen({ user }: Props) {
       .catch(() => setError('Failed to load place details'))
       .finally(() => setLoading(false));
   }, [placeId]);
+
+  // Track recently viewed
+  useEffect(() => {
+    if (!venue) return;
+    addRecentlyViewed({
+      placeId: venue.placeId,
+      name: venue.name,
+      address: venue.formattedAddress || venue.vicinity,
+      photoReference: venue.photoReferences[0],
+      rating: venue.rating,
+    });
+  }, [venue?.placeId]);
 
   const savedEntry = savedPlaces.find(p => p.placeId === placeId);
   const isSaved = !!savedEntry;

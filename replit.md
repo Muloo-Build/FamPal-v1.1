@@ -80,6 +80,34 @@ server/
   index.ts                   — Express API server (keep as-is)
 ```
 
+## Recently Viewed
+- `lib/recentlyViewed.ts` — localStorage utility: `addRecentlyViewed`, `getRecentlyViewed`, `clearRecentlyViewed`
+- Key: `fampal_recently_viewed`, max 8 items, newest first
+- Tracked on VenueDetail mount (after venue loads)
+- Shown in Profile as a horizontal scroll row with thumbnails + clear button
+
+## Guest / Unauth Access
+- Explore (`/`) and VenueDetail (`/venue/:placeId`) are open to all — no login required
+- Saved (`/saved`) and Profile (`/profile`) require real auth or guest mode
+- Unauthed users on Explore see a "Sign in" nudge banner; heart button redirects to login
+
+## Explore Improvements
+- 12 categories: All, Parks, Restaurants, Play Areas, Museums, Beaches, Nature, Sports, Arts & Crafts, Birthday, Splash Parks, Farms
+- 6 filters: Open Now 🟢, Kid Friendly 👶, Dog Friendly 🐕, Wheelchair ♿, Outdoor 🌿, Restrooms 🚻
+- Open Now filter shows count of currently-open venues in the label
+- Location name resolved via Nominatim reverse geocoding (free, no key needed)
+- `openNow` field added to `Venue` type, mapped from `place.opening_hours?.open_now`
+
+## VenueCard
+- Open/Closed badge shown top-left when `openNow` is defined (emerald green when open, dark when closed)
+- Heart button top-right; Category badge bottom-left
+
+## Profile
+- Live stats: Saved count, Visited count (places tagged `been_loved`), Favourites count (places tagged `favourite`)
+- Recently Viewed section with horizontal scroll thumbnails
+- Share FamPals button (Web Share API with clipboard fallback)
+- Dark mode toggle removed (was non-functional)
+
 ## Place Tags & Private Notes
 - `PLACE_TAGS` exported from `src/screens/VenueDetail.tsx`: Favourite ⭐, Been there loved it ✅, Date night 🌙, Family outing 👨‍👩‍👧, Want to visit 📌, Not for me 👎
 - When saving a place for the first time, a bottom sheet slides up to let user tag + add a private note

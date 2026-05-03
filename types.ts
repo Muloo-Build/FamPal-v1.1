@@ -17,6 +17,7 @@ export interface Venue {
   lng: number;
   distance?: string;
   category?: string;
+  openNow?: boolean;
   kidFriendly?: boolean;
   dogFriendly?: boolean;
   wheelchairAccessible?: boolean;
@@ -28,7 +29,6 @@ export interface VenueDetail extends Venue {
   formattedAddress?: string;
   phone?: string;
   website?: string;
-  openNow?: boolean;
   editorialSummary?: string;
   mapsUrl?: string;
 }

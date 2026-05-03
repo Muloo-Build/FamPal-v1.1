@@ -5,7 +5,7 @@ import type { AuthUser } from '../../lib/firebase';
 import type { SavedPlace } from '../../types';
 import { listenToSavedPlaces, deleteSavedPlace, patchSavedPlace } from '../../lib/userData';
 import BottomNav from '../components/BottomNav';
-import { PLACE_TAGS } from './VenueDetail';
+import { PLACE_TAGS } from '../constants/placeTags';
 
 interface Props { user: AuthUser | null; }
 

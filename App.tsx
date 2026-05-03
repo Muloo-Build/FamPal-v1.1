@@ -36,30 +36,21 @@ const App: React.FC = () => {
 
   return (
     <Routes>
+      {/* Public — no auth required, user may be null */}
+      <Route path="/" element={<ExploreScreen user={user ?? null} />} />
+      <Route path="/venue/:placeId" element={<VenueDetailScreen user={user ?? null} />} />
+
+      {/* Login page — redirect away if already authed */}
       <Route
         path="/login"
         element={
-          isLoggedIn
+          !!user
             ? <Navigate to="/" replace />
             : <LoginScreen onGuest={() => setIsGuest(true)} />
         }
       />
-      <Route
-        path="/"
-        element={
-          isLoggedIn
-            ? <ExploreScreen user={user} />
-            : <Navigate to="/login" replace />
-        }
-      />
-      <Route
-        path="/venue/:placeId"
-        element={
-          isLoggedIn
-            ? <VenueDetailScreen user={user} />
-            : <Navigate to="/login" replace />
-        }
-      />
+
+      {/* Protected — require real auth or guest mode */}
       <Route
         path="/saved"
         element={
@@ -76,7 +67,7 @@ const App: React.FC = () => {
             : <Navigate to="/login" replace />
         }
       />
-      <Route path="*" element={<Navigate to={isLoggedIn ? '/' : '/login'} replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 };

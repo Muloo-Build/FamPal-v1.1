@@ -52,10 +52,23 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
           </div>
         )}
 
+        {/* Open / Closed badge — top left */}
+        {venue.openNow !== undefined && (
+          <div className={`absolute top-3 left-3 flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold shadow-sm ${
+            venue.openNow
+              ? 'bg-emerald-500 text-white'
+              : 'bg-black/60 text-white/90 backdrop-blur-sm'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${venue.openNow ? 'bg-white' : 'bg-white/60'}`} />
+            {venue.openNow ? 'Open' : 'Closed'}
+          </div>
+        )}
+
+        {/* Heart — top right */}
         {onToggleSave && (
           <button
             onClick={e => { e.stopPropagation(); onToggleSave(venue); }}
-            className={`absolute top-3 right-3 p-2.5 rounded-full backdrop-blur-md shadow-sm transition-all ${
+            className={`absolute top-3 right-3 p-2.5 rounded-full backdrop-blur-md shadow-sm transition-all active:scale-90 ${
               isSaved ? 'bg-rose-500 text-white' : 'bg-white/90 text-slate-400 hover:text-rose-400'
             }`}
           >
@@ -63,6 +76,7 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
           </button>
         )}
 
+        {/* Category badge — bottom left */}
         <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-xl shadow-sm border border-black/5">
           <span className="text-xs font-semibold text-slate-700 tracking-wide uppercase">
             {venue.category || categoryLabel(venue.types)}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, MapPin, X, SlidersHorizontal, Filter } from 'lucide-react';
 import type { AuthUser } from '../../lib/firebase';
 import type { Venue, SavedPlace } from '../../types';
@@ -11,15 +12,22 @@ interface Props {
 }
 
 const CATEGORIES = [
-  { label: 'All',        type: undefined,    keyword: 'family friendly kids' },
-  { label: 'Parks',      type: 'park',       keyword: undefined },
-  { label: 'Restaurants',type: 'restaurant', keyword: 'family' },
-  { label: 'Play Areas', type: undefined,    keyword: 'playground kids children' },
-  { label: 'Museums',    type: 'museum',     keyword: undefined },
-  { label: 'Beaches',    type: undefined,    keyword: 'beach family' },
+  { label: 'All',           type: undefined,             keyword: 'family friendly kids'         },
+  { label: 'Parks',         type: 'park',                keyword: undefined                       },
+  { label: 'Restaurants',   type: 'restaurant',          keyword: 'family'                        },
+  { label: 'Play Areas',    type: undefined,             keyword: 'playground kids children'      },
+  { label: 'Museums',       type: 'museum',              keyword: undefined                       },
+  { label: 'Beaches',       type: undefined,             keyword: 'beach family'                  },
+  { label: 'Nature',        type: 'natural_feature',     keyword: 'nature walk hiking family'     },
+  { label: 'Sports',        type: 'stadium',             keyword: 'kids sports activity'          },
+  { label: 'Arts & Crafts', type: undefined,             keyword: 'arts crafts kids workshop'     },
+  { label: 'Birthday',      type: undefined,             keyword: 'birthday party venue kids'     },
+  { label: 'Splash Parks',  type: undefined,             keyword: 'splash park water play kids'   },
+  { label: 'Farms',         type: undefined,             keyword: 'farm animals petting kids'     },
 ];
 
 const FILTERS = [
+  { id: 'open',        label: 'Open Now',       emoji: '🟢', key: 'openNow'              },
   { id: 'kids',        label: 'Kid Friendly',   emoji: '👶', key: 'kidFriendly'          },
   { id: 'dogs',        label: 'Dog Friendly',   emoji: '🐕', key: 'dogFriendly'          },
   { id: 'wheelchair',  label: 'Wheelchair',     emoji: '♿', key: 'wheelchairAccessible' },
@@ -52,6 +60,7 @@ function mapGooglePlace(place: any, userLat?: number, userLng?: number): Venue {
     lng,
     distance: userLat != null && userLng != null
       ? haversineDistance(userLat, userLng, lat, lng) : undefined,
+    openNow: place.opening_hours?.open_now,
     kidFriendly: place.good_for_children ?? false,
     dogFriendly: place.allows_dogs ?? false,
     wheelchairAccessible: place.wheelchair_accessible ?? false,
@@ -60,7 +69,29 @@ function mapGooglePlace(place: any, userLat?: number, userLng?: number): Venue {
   };
 }
 
+async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    const data = await res.json();
+    return (
+      data.address?.suburb ||
+      data.address?.city_district ||
+      data.address?.neighbourhood ||
+      data.address?.city ||
+      data.address?.town ||
+      data.address?.village ||
+      'Near you'
+    );
+  } catch {
+    return 'Near you';
+  }
+}
+
 export default function ExploreScreen({ user }: Props) {
+  const navigate = useNavigate();
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [inputValue, setInputValue] = useState('');
@@ -78,7 +109,13 @@ export default function ExploreScreen({ user }: Props) {
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
-      pos => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, name: 'Current Location' }),
+      async pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setLocation({ lat, lng, name: 'Near you' });
+        const name = await reverseGeocode(lat, lng);
+        setLocation({ lat, lng, name });
+      },
       () => setLocation({ lat: -33.9249, lng: 18.4241, name: 'Cape Town' }),
       { timeout: 8000 }
     );
@@ -142,7 +179,13 @@ export default function ExploreScreen({ user }: Props) {
 
   const filteredVenues = venues.filter(v => {
     for (const f of FILTERS) {
-      if (activeFilters.has(f.id) && !v[f.key]) return false;
+      if (activeFilters.has(f.id)) {
+        if (f.id === 'open') {
+          if (v.openNow !== true) return false;
+        } else if (!v[f.key as keyof Venue]) {
+          return false;
+        }
+      }
     }
     return true;
   });
@@ -150,7 +193,7 @@ export default function ExploreScreen({ user }: Props) {
   const savedIds = new Set(savedPlaces.map(p => p.placeId));
 
   const handleToggleSave = async (venue: Venue) => {
-    if (!user) return;
+    if (!user) { navigate('/login'); return; }
     const isSaved = savedIds.has(venue.placeId);
     if (isSaved) {
       await deleteSavedPlace(user.uid, venue.placeId);
@@ -166,10 +209,10 @@ export default function ExploreScreen({ user }: Props) {
   };
 
   const filterCount = activeFilters.size;
+  const openNowCount = venues.filter(v => v.openNow === true).length;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:pl-16 lg:pl-56">
-      {/* Sticky Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-slate-100">
         <div className="max-w-7xl mx-auto px-4 pt-4 pb-3">
           {/* Title row */}
@@ -177,7 +220,6 @@ export default function ExploreScreen({ user }: Props) {
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:hidden">FamPals</h1>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 hidden md:block">Explore</h1>
             <div className="flex items-center gap-2">
-              {/* Filter toggle */}
               <button
                 onClick={() => setShowFilters(v => !v)}
                 className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
@@ -194,7 +236,6 @@ export default function ExploreScreen({ user }: Props) {
                   </span>
                 )}
               </button>
-              {/* Radius */}
               <button
                 onClick={() => setShowRadius(v => !v)}
                 className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-sm font-medium hover:bg-slate-200 transition-colors"
@@ -258,7 +299,7 @@ export default function ExploreScreen({ user }: Props) {
             ))}
           </div>
 
-          {/* Filter chips — shown when filter panel is open */}
+          {/* Filter panel */}
           {showFilters && (
             <div className="mt-2.5 flex gap-2 flex-wrap">
               {FILTERS.map(f => {
@@ -275,6 +316,9 @@ export default function ExploreScreen({ user }: Props) {
                   >
                     <span>{f.emoji}</span>
                     <span>{f.label}</span>
+                    {f.id === 'open' && openNowCount > 0 && !active && (
+                      <span className="text-xs text-emerald-600 font-bold">({openNowCount})</span>
+                    )}
                     {active && <span className="ml-0.5 text-teal-200 text-xs">✓</span>}
                   </button>
                 );
@@ -292,7 +336,6 @@ export default function ExploreScreen({ user }: Props) {
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 pt-5 pb-28 md:pb-8">
         <div className="max-w-7xl mx-auto px-4">
           {!location ? (
@@ -324,9 +367,7 @@ export default function ExploreScreen({ user }: Props) {
             <div className="flex flex-col items-center justify-center pt-20 gap-3">
               <MapPin size={36} className="text-slate-300" />
               <p className="text-slate-500 font-medium">
-                {venues.length > 0 && filterCount > 0
-                  ? 'No places match your filters'
-                  : 'No places found'}
+                {venues.length > 0 && filterCount > 0 ? 'No places match your filters' : 'No places found'}
               </p>
               <p className="text-slate-400 text-sm text-center">
                 {venues.length > 0 && filterCount > 0
@@ -342,6 +383,19 @@ export default function ExploreScreen({ user }: Props) {
             </div>
           ) : (
             <div className="animate-fade-in">
+              {/* Sign-in nudge for unauthed users */}
+              {!user && (
+                <div className="mb-5 bg-teal-50 border border-teal-100 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+                  <p className="text-teal-800 text-sm font-medium">Sign in to save places and write reviews</p>
+                  <button
+                    onClick={() => navigate('/login')}
+                    className="shrink-0 bg-teal-600 text-white text-sm font-semibold px-4 py-1.5 rounded-full hover:bg-teal-700 transition-colors"
+                  >
+                    Sign in
+                  </button>
+                </div>
+              )}
+
               {(searchQuery || filterCount > 0) && (
                 <p className="text-sm text-slate-500 mb-4">
                   {filteredVenues.length} result{filteredVenues.length !== 1 ? 's' : ''}
@@ -354,7 +408,7 @@ export default function ExploreScreen({ user }: Props) {
                   <VenueCard
                     key={venue.placeId} venue={venue}
                     isSaved={savedIds.has(venue.placeId)}
-                    onToggleSave={user ? handleToggleSave : undefined}
+                    onToggleSave={handleToggleSave}
                   />
                 ))}
               </div>
