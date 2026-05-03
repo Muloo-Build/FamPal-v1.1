@@ -159,23 +159,24 @@ export default function ExploreScreen({ user }: Props) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:pl-16 lg:pl-56">
       {/* Sticky Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-slate-100">
-        <div className="px-4 pt-safe pt-4 pb-3">
+        <div className="max-w-7xl mx-auto px-4 pt-safe pt-4 pb-3">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">FamPals</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:hidden">FamPals</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 hidden md:block">Explore</h1>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowRadius(v => !v)}
-                className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-sm font-medium active:bg-slate-200 transition-colors"
+                className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-sm font-medium hover:bg-slate-200 active:bg-slate-200 transition-colors"
               >
                 <SlidersHorizontal size={14} />
                 {radius}km
               </button>
               <div className="flex items-center gap-1.5 bg-teal-50 text-teal-700 px-3 py-1.5 rounded-full text-sm font-medium">
                 <MapPin size={14} className="text-teal-600" />
-                <span className="max-w-[100px] truncate">{location?.name ?? '…'}</span>
+                <span className="max-w-[120px] truncate">{location?.name ?? '…'}</span>
               </div>
             </div>
           </div>
@@ -225,7 +226,7 @@ export default function ExploreScreen({ user }: Props) {
                 className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold transition-all shrink-0 ${
                   categoryIndex === idx && !searchQuery
                     ? 'bg-teal-600 text-white shadow-md shadow-teal-500/20'
-                    : 'bg-white text-slate-600 border border-slate-200 active:bg-slate-50'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300 active:bg-slate-50'
                 }`}
               >
                 {cat.label}
@@ -236,57 +237,61 @@ export default function ExploreScreen({ user }: Props) {
       </header>
 
       {/* Content */}
-      <main className="flex-1 px-4 pt-5 pb-28">
-        {!location ? (
-          <div className="flex flex-col items-center justify-center pt-20 gap-3">
-            <div className="w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
-            <p className="text-slate-500 text-sm">Getting your location…</p>
-          </div>
-        ) : loading && venues.length === 0 ? (
-          <div className="flex flex-col gap-4">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="bg-white rounded-3xl overflow-hidden border border-slate-100 animate-pulse">
-                <div className="h-48 bg-slate-200" />
-                <div className="p-4 space-y-2">
-                  <div className="h-5 bg-slate-200 rounded-lg w-3/4" />
-                  <div className="h-4 bg-slate-100 rounded-lg w-1/2" />
+      <main className="flex-1 pt-5 pb-28 md:pb-8">
+        <div className="max-w-7xl mx-auto px-4">
+          {!location ? (
+            <div className="flex flex-col items-center justify-center pt-20 gap-3">
+              <div className="w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+              <p className="text-slate-500 text-sm">Getting your location…</p>
+            </div>
+          ) : loading && venues.length === 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+              {[1, 2, 3, 4, 5, 6].map(i => (
+                <div key={i} className="bg-white rounded-3xl overflow-hidden border border-slate-100 animate-pulse">
+                  <div className="h-48 bg-slate-200" />
+                  <div className="p-4 space-y-2">
+                    <div className="h-5 bg-slate-200 rounded-lg w-3/4" />
+                    <div className="h-4 bg-slate-100 rounded-lg w-1/2" />
+                  </div>
                 </div>
+              ))}
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center pt-20 gap-4">
+              <p className="text-slate-500 text-center">{error}</p>
+              <button
+                onClick={() => fetchPlaces(categoryIndex, searchQuery, location)}
+                className="bg-teal-600 text-white px-6 py-2.5 rounded-full font-semibold text-sm"
+              >
+                Try again
+              </button>
+            </div>
+          ) : venues.length === 0 ? (
+            <div className="flex flex-col items-center justify-center pt-20 gap-2">
+              <MapPin size={36} className="text-slate-300" />
+              <p className="text-slate-500 font-medium">No places found</p>
+              <p className="text-slate-400 text-sm text-center">Try a different category or expand the radius</p>
+            </div>
+          ) : (
+            <div className="animate-fade-in">
+              {searchQuery && (
+                <p className="text-sm text-slate-500 mb-4">
+                  {venues.length} result{venues.length !== 1 ? 's' : ''} for "<span className="font-medium text-slate-700">{searchQuery}</span>"
+                </p>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                {venues.map(venue => (
+                  <VenueCard
+                    key={venue.placeId}
+                    venue={venue}
+                    isSaved={savedIds.has(venue.placeId)}
+                    onToggleSave={user ? handleToggleSave : undefined}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center pt-20 gap-4">
-            <p className="text-slate-500 text-center">{error}</p>
-            <button
-              onClick={() => fetchPlaces(categoryIndex, searchQuery, location)}
-              className="bg-teal-600 text-white px-6 py-2.5 rounded-full font-semibold text-sm"
-            >
-              Try again
-            </button>
-          </div>
-        ) : venues.length === 0 ? (
-          <div className="flex flex-col items-center justify-center pt-20 gap-2">
-            <MapPin size={36} className="text-slate-300" />
-            <p className="text-slate-500 font-medium">No places found</p>
-            <p className="text-slate-400 text-sm text-center">Try a different category or expand the radius</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-5 animate-fade-in">
-            {searchQuery && (
-              <p className="text-sm text-slate-500">
-                {venues.length} result{venues.length !== 1 ? 's' : ''} for "<span className="font-medium text-slate-700">{searchQuery}</span>"
-              </p>
-            )}
-            {venues.map(venue => (
-              <VenueCard
-                key={venue.placeId}
-                venue={venue}
-                isSaved={savedIds.has(venue.placeId)}
-                onToggleSave={user ? handleToggleSave : undefined}
-              />
-            ))}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </main>
 
       <BottomNav />

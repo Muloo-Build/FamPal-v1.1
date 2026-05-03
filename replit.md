@@ -46,6 +46,15 @@ The user prefers iterative development and detailed explanations. Ask before mak
 **Server:**
 - `server/index.ts` — Express on port 8080. Proxied via Vite dev server on port 5000.
 
+## Responsive Layout (Desktop)
+- **BottomNav**: Mobile = bottom bar; Desktop (md+) = fixed left sidebar (16px icon-only → 56px with labels on lg)
+- **All screens**: `md:pl-16 lg:pl-56` shifts content right of sidebar; `max-w-7xl mx-auto` centers content
+- **Explore cards**: `grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3` — 1→2→3 columns
+- **Saved items**: `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` grid
+- **VenueDetail**: Mobile = stacked; Desktop = 2-column (photo gallery left, info right) with thumbnail strip
+- **Profile**: `max-w-3xl mx-auto` centered column
+- **Hover states**: Added `hover:` variants on all interactive elements for desktop UX
+
 ## File Structure
 
 ```
@@ -57,12 +66,12 @@ src/
   index.css                  — Tailwind v4 + scrollbar-hide + animations
   screens/
     Login.tsx                — Welcome + Google + Email/Password + guest mode
-    Explore.tsx              — Home: sticky header, search, category chips, venue cards
-    VenueDetail.tsx          — Photo gallery, details, contact, save/share
-    Saved.tsx                — Saved places list with delete
+    Explore.tsx              — Home: sticky header, search, category chips, venue grid
+    VenueDetail.tsx          — Photo gallery (desktop: 2-col), details, contact, save/share
+    Saved.tsx                — Saved places grid with delete
     Profile.tsx              — User info, settings, sign out
   components/
-    BottomNav.tsx            — 3-tab nav: Explore / Saved / Profile
+    BottomNav.tsx            — Mobile: bottom bar; Desktop: left sidebar with brand logo
     VenueCard.tsx            — Card with photo, category badge, rating, distance, heart
 lib/
   firebase.ts                — JWT auth (keep as-is)
