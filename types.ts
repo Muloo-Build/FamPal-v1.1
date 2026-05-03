@@ -17,6 +17,11 @@ export interface Venue {
   lng: number;
   distance?: string;
   category?: string;
+  kidFriendly?: boolean;
+  dogFriendly?: boolean;
+  wheelchairAccessible?: boolean;
+  outdoorSeating?: boolean;
+  hasRestroom?: boolean;
 }
 
 export interface VenueDetail extends Venue {
@@ -36,6 +41,24 @@ export interface SavedPlace {
   photoReference?: string;
   category?: string;
   savedAt: string;
+}
+
+export interface PlaceReview {
+  id: string;
+  user_id: string;
+  display_name: string | null;
+  rating: number;
+  body: string | null;
+  tags: string[];
+  created_at: string;
+}
+
+export interface GoogleReview {
+  authorName: string;
+  authorPhoto?: string;
+  rating: number;
+  text?: string;
+  relativeTime?: string;
 }
 
 export type User = AuthUser;

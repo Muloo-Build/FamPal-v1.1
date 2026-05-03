@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, MapPin, X, SlidersHorizontal } from 'lucide-react';
+import { Search, MapPin, X, SlidersHorizontal, Filter } from 'lucide-react';
 import type { AuthUser } from '../../lib/firebase';
 import type { Venue, SavedPlace } from '../../types';
 import { listenToSavedPlaces, upsertSavedPlace, deleteSavedPlace } from '../../lib/userData';
@@ -11,20 +11,27 @@ interface Props {
 }
 
 const CATEGORIES = [
-  { label: 'All', type: undefined, keyword: 'family friendly kids' },
-  { label: 'Parks', type: 'park', keyword: undefined },
-  { label: 'Restaurants', type: 'restaurant', keyword: 'family' },
-  { label: 'Play Areas', type: undefined, keyword: 'playground kids children' },
-  { label: 'Museums', type: 'museum', keyword: undefined },
-  { label: 'Beaches', type: undefined, keyword: 'beach family' },
+  { label: 'All',        type: undefined,    keyword: 'family friendly kids' },
+  { label: 'Parks',      type: 'park',       keyword: undefined },
+  { label: 'Restaurants',type: 'restaurant', keyword: 'family' },
+  { label: 'Play Areas', type: undefined,    keyword: 'playground kids children' },
+  { label: 'Museums',    type: 'museum',     keyword: undefined },
+  { label: 'Beaches',    type: undefined,    keyword: 'beach family' },
 ];
+
+const FILTERS = [
+  { id: 'kids',        label: 'Kid Friendly',   emoji: '👶', key: 'kidFriendly'          },
+  { id: 'dogs',        label: 'Dog Friendly',   emoji: '🐕', key: 'dogFriendly'          },
+  { id: 'wheelchair',  label: 'Wheelchair',     emoji: '♿', key: 'wheelchairAccessible' },
+  { id: 'outdoor',     label: 'Outdoor',        emoji: '🌿', key: 'outdoorSeating'       },
+  { id: 'restroom',    label: 'Restrooms',      emoji: '🚻', key: 'hasRestroom'          },
+] as const;
 
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): string {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
+  const a = Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
@@ -44,8 +51,12 @@ function mapGooglePlace(place: any, userLat?: number, userLng?: number): Venue {
     lat,
     lng,
     distance: userLat != null && userLng != null
-      ? haversineDistance(userLat, userLng, lat, lng)
-      : undefined,
+      ? haversineDistance(userLat, userLng, lat, lng) : undefined,
+    kidFriendly: place.good_for_children ?? false,
+    dogFriendly: place.allows_dogs ?? false,
+    wheelchairAccessible: place.wheelchair_accessible ?? false,
+    outdoorSeating: place.outdoor_seating ?? false,
+    hasRestroom: place.restroom ?? false,
   };
 }
 
@@ -60,17 +71,15 @@ export default function ExploreScreen({ user }: Props) {
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([]);
   const [radius, setRadius] = useState(10);
   const [showRadius, setShowRadius] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const searchTimeout = useRef<number | null>(null);
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, name: 'Current Location' });
-      },
-      () => {
-        setLocation({ lat: -33.9249, lng: 18.4241, name: 'Cape Town' });
-      },
+      pos => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, name: 'Current Location' }),
+      () => setLocation({ lat: -33.9249, lng: 18.4241, name: 'Cape Town' }),
       { timeout: 8000 }
     );
   }, []);
@@ -85,34 +94,24 @@ export default function ExploreScreen({ user }: Props) {
     if (abortRef.current) abortRef.current.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-
     setLoading(true);
     setError('');
     try {
       let data: any;
       if (query.trim()) {
-        const params = new URLSearchParams({
-          query: `${query} family`,
-          lat: String(loc.lat),
-          lng: String(loc.lng),
-        });
+        const params = new URLSearchParams({ query: `${query} family`, lat: String(loc.lat), lng: String(loc.lng) });
         const res = await fetch(`/api/places/search?${params}`, { signal: ctrl.signal });
         data = await res.json();
       } else {
         const cat = CATEGORIES[catIdx];
-        const params = new URLSearchParams({
-          lat: String(loc.lat),
-          lng: String(loc.lng),
-          radius: String(radius * 1000),
-        });
+        const params = new URLSearchParams({ lat: String(loc.lat), lng: String(loc.lng), radius: String(radius * 1000) });
         if (cat.type) params.set('type', cat.type);
         if (cat.keyword) params.set('keyword', cat.keyword);
         const res = await fetch(`/api/places/nearby?${params}`, { signal: ctrl.signal });
         data = await res.json();
       }
       if (ctrl.signal.aborted) return;
-      const results = (data.results || []).map((p: any) => mapGooglePlace(p, loc.lat, loc.lng));
-      setVenues(results);
+      setVenues((data.results || []).map((p: any) => mapGooglePlace(p, loc.lat, loc.lng)));
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       setError('Could not load places. Please try again.');
@@ -131,10 +130,22 @@ export default function ExploreScreen({ user }: Props) {
     searchTimeout.current = window.setTimeout(() => setSearchQuery(val), 500);
   };
 
-  const clearSearch = () => {
-    setInputValue('');
-    setSearchQuery('');
+  const clearSearch = () => { setInputValue(''); setSearchQuery(''); };
+
+  const toggleFilter = (id: string) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
+
+  const filteredVenues = venues.filter(v => {
+    for (const f of FILTERS) {
+      if (activeFilters.has(f.id) && !v[f.key]) return false;
+    }
+    return true;
+  });
 
   const savedIds = new Set(savedPlaces.map(p => p.placeId));
 
@@ -146,41 +157,59 @@ export default function ExploreScreen({ user }: Props) {
       setSavedPlaces(prev => prev.filter(p => p.placeId !== venue.placeId));
     } else {
       const place: SavedPlace = {
-        placeId: venue.placeId,
-        name: venue.name,
-        address: venue.vicinity,
-        rating: venue.rating,
-        photoReference: venue.photoReference,
-        savedAt: new Date().toISOString(),
+        placeId: venue.placeId, name: venue.name, address: venue.vicinity,
+        rating: venue.rating, photoReference: venue.photoReference, savedAt: new Date().toISOString(),
       };
       setSavedPlaces(prev => [place, ...prev]);
       await upsertSavedPlace(user.uid, place);
     }
   };
 
+  const filterCount = activeFilters.size;
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:pl-16 lg:pl-56">
       {/* Sticky Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-slate-100">
-        <div className="max-w-7xl mx-auto px-4 pt-safe pt-4 pb-3">
+        <div className="max-w-7xl mx-auto px-4 pt-4 pb-3">
+          {/* Title row */}
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:hidden">FamPals</h1>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 hidden md:block">Explore</h1>
             <div className="flex items-center gap-2">
+              {/* Filter toggle */}
+              <button
+                onClick={() => setShowFilters(v => !v)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  filterCount > 0 || showFilters
+                    ? 'bg-teal-600 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Filter size={14} />
+                <span>Filter</span>
+                {filterCount > 0 && (
+                  <span className="ml-0.5 bg-white text-teal-700 rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold leading-none">
+                    {filterCount}
+                  </span>
+                )}
+              </button>
+              {/* Radius */}
               <button
                 onClick={() => setShowRadius(v => !v)}
-                className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-sm font-medium hover:bg-slate-200 active:bg-slate-200 transition-colors"
+                className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full text-sm font-medium hover:bg-slate-200 transition-colors"
               >
                 <SlidersHorizontal size={14} />
                 {radius}km
               </button>
               <div className="flex items-center gap-1.5 bg-teal-50 text-teal-700 px-3 py-1.5 rounded-full text-sm font-medium">
                 <MapPin size={14} className="text-teal-600" />
-                <span className="max-w-[120px] truncate">{location?.name ?? '…'}</span>
+                <span className="max-w-[100px] truncate">{location?.name ?? '…'}</span>
               </div>
             </div>
           </div>
 
+          {/* Radius slider */}
           {showRadius && (
             <div className="mb-3 bg-slate-50 rounded-2xl px-4 py-3">
               <div className="flex justify-between text-sm text-slate-600 mb-1.5">
@@ -188,10 +217,7 @@ export default function ExploreScreen({ user }: Props) {
                 <span className="font-semibold text-teal-600">{radius}km</span>
               </div>
               <input
-                type="range"
-                min={1}
-                max={50}
-                value={radius}
+                type="range" min={1} max={50} value={radius}
                 onChange={e => setRadius(Number(e.target.value))}
                 onMouseUp={() => { if (location) fetchPlaces(categoryIndex, searchQuery, location); }}
                 onTouchEnd={() => { if (location) fetchPlaces(categoryIndex, searchQuery, location); }}
@@ -204,9 +230,7 @@ export default function ExploreScreen({ user }: Props) {
           <div className="relative mb-3">
             <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
-              type="text"
-              value={inputValue}
-              onChange={e => handleSearchInput(e.target.value)}
+              type="text" value={inputValue} onChange={e => handleSearchInput(e.target.value)}
               placeholder="Find family-friendly places..."
               className="w-full bg-slate-100 rounded-2xl py-3 pl-11 pr-10 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500/30 transition-all text-sm font-medium"
             />
@@ -233,6 +257,38 @@ export default function ExploreScreen({ user }: Props) {
               </button>
             ))}
           </div>
+
+          {/* Filter chips — shown when filter panel is open */}
+          {showFilters && (
+            <div className="mt-2.5 flex gap-2 flex-wrap">
+              {FILTERS.map(f => {
+                const active = activeFilters.has(f.id);
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => toggleFilter(f.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold border transition-all ${
+                      active
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-sm shadow-teal-500/20'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'
+                    }`}
+                  >
+                    <span>{f.emoji}</span>
+                    <span>{f.label}</span>
+                    {active && <span className="ml-0.5 text-teal-200 text-xs">✓</span>}
+                  </button>
+                );
+              })}
+              {filterCount > 0 && (
+                <button
+                  onClick={() => setActiveFilters(new Set())}
+                  className="px-3 py-1.5 rounded-full text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -246,7 +302,7 @@ export default function ExploreScreen({ user }: Props) {
             </div>
           ) : loading && venues.length === 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-              {[1, 2, 3, 4, 5, 6].map(i => (
+              {[1,2,3,4,5,6].map(i => (
                 <div key={i} className="bg-white rounded-3xl overflow-hidden border border-slate-100 animate-pulse">
                   <div className="h-48 bg-slate-200" />
                   <div className="p-4 space-y-2">
@@ -259,31 +315,44 @@ export default function ExploreScreen({ user }: Props) {
           ) : error ? (
             <div className="flex flex-col items-center justify-center pt-20 gap-4">
               <p className="text-slate-500 text-center">{error}</p>
-              <button
-                onClick={() => fetchPlaces(categoryIndex, searchQuery, location)}
-                className="bg-teal-600 text-white px-6 py-2.5 rounded-full font-semibold text-sm"
-              >
+              <button onClick={() => fetchPlaces(categoryIndex, searchQuery, location)}
+                className="bg-teal-600 text-white px-6 py-2.5 rounded-full font-semibold text-sm">
                 Try again
               </button>
             </div>
-          ) : venues.length === 0 ? (
-            <div className="flex flex-col items-center justify-center pt-20 gap-2">
+          ) : filteredVenues.length === 0 ? (
+            <div className="flex flex-col items-center justify-center pt-20 gap-3">
               <MapPin size={36} className="text-slate-300" />
-              <p className="text-slate-500 font-medium">No places found</p>
-              <p className="text-slate-400 text-sm text-center">Try a different category or expand the radius</p>
+              <p className="text-slate-500 font-medium">
+                {venues.length > 0 && filterCount > 0
+                  ? 'No places match your filters'
+                  : 'No places found'}
+              </p>
+              <p className="text-slate-400 text-sm text-center">
+                {venues.length > 0 && filterCount > 0
+                  ? 'Try removing some filters or expanding the radius'
+                  : 'Try a different category or expand the radius'}
+              </p>
+              {filterCount > 0 && (
+                <button onClick={() => setActiveFilters(new Set())}
+                  className="mt-1 bg-teal-600 text-white px-5 py-2 rounded-full text-sm font-semibold">
+                  Clear filters
+                </button>
+              )}
             </div>
           ) : (
             <div className="animate-fade-in">
-              {searchQuery && (
+              {(searchQuery || filterCount > 0) && (
                 <p className="text-sm text-slate-500 mb-4">
-                  {venues.length} result{venues.length !== 1 ? 's' : ''} for "<span className="font-medium text-slate-700">{searchQuery}</span>"
+                  {filteredVenues.length} result{filteredVenues.length !== 1 ? 's' : ''}
+                  {searchQuery && <> for "<span className="font-medium text-slate-700">{searchQuery}</span>"</>}
+                  {filterCount > 0 && <span className="text-teal-600 font-medium"> · {filterCount} filter{filterCount > 1 ? 's' : ''} active</span>}
                 </p>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-                {venues.map(venue => (
+                {filteredVenues.map(venue => (
                   <VenueCard
-                    key={venue.placeId}
-                    venue={venue}
+                    key={venue.placeId} venue={venue}
                     isSaved={savedIds.has(venue.placeId)}
                     onToggleSave={user ? handleToggleSave : undefined}
                   />

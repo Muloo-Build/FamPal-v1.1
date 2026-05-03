@@ -11,20 +11,11 @@ interface Props {
 
 function categoryLabel(types: string[]): string {
   const map: Record<string, string> = {
-    park: 'Park',
-    restaurant: 'Restaurant',
-    cafe: 'Café',
-    museum: 'Museum',
-    aquarium: 'Aquarium',
-    zoo: 'Zoo',
-    amusement_park: 'Amusement Park',
-    shopping_mall: 'Mall',
-    movie_theater: 'Cinema',
-    library: 'Library',
-    bowling_alley: 'Bowling',
-    stadium: 'Stadium',
-    beach: 'Beach',
-    natural_feature: 'Nature',
+    park: 'Park', restaurant: 'Restaurant', cafe: 'Café', museum: 'Museum',
+    aquarium: 'Aquarium', zoo: 'Zoo', amusement_park: 'Amusement Park',
+    shopping_mall: 'Mall', movie_theater: 'Cinema', library: 'Library',
+    bowling_alley: 'Bowling', stadium: 'Stadium', beach: 'Beach',
+    natural_feature: 'Nature', playground: 'Play Area',
   };
   for (const t of types) {
     if (map[t]) return map[t];
@@ -40,19 +31,21 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
     ? `/api/places/photo?photoReference=${encodeURIComponent(venue.photoReference)}&maxWidth=600`
     : null;
 
+  const badges = [
+    venue.kidFriendly && { label: 'Kids', emoji: '👶' },
+    venue.dogFriendly && { label: 'Dogs', emoji: '🐕' },
+    venue.wheelchairAccessible && { label: 'Accessible', emoji: '♿' },
+    venue.outdoorSeating && { label: 'Outdoor', emoji: '🌿' },
+  ].filter(Boolean) as { label: string; emoji: string }[];
+
   return (
     <div
       onClick={() => navigate(`/venue/${venue.placeId}`)}
-      className="bg-white rounded-3xl overflow-hidden shadow-[0_4px_24px_rgb(0,0,0,0.06)] border border-slate-100/50 active:scale-[0.98] transition-transform cursor-pointer"
+      className="bg-white rounded-3xl overflow-hidden shadow-[0_4px_24px_rgb(0,0,0,0.06)] border border-slate-100/50 hover:shadow-[0_8px_32px_rgb(0,0,0,0.10)] active:scale-[0.98] transition-all cursor-pointer"
     >
       <div className="relative h-48 bg-slate-100">
         {photoUrl ? (
-          <img
-            src={photoUrl}
-            alt={venue.name}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
+          <img src={photoUrl} alt={venue.name} className="w-full h-full object-cover" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-teal-50 to-slate-100">
             <MapPin size={32} className="text-teal-300" />
@@ -62,10 +55,8 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
         {onToggleSave && (
           <button
             onClick={e => { e.stopPropagation(); onToggleSave(venue); }}
-            className={`absolute top-3 right-3 p-2.5 rounded-full backdrop-blur-md shadow-sm transition-colors ${
-              isSaved
-                ? 'bg-rose-500 text-white'
-                : 'bg-white/90 text-slate-400 hover:text-rose-400'
+            className={`absolute top-3 right-3 p-2.5 rounded-full backdrop-blur-md shadow-sm transition-all ${
+              isSaved ? 'bg-rose-500 text-white' : 'bg-white/90 text-slate-400 hover:text-rose-400'
             }`}
           >
             <Heart size={18} fill={isSaved ? 'currentColor' : 'none'} />
@@ -81,9 +72,7 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
 
       <div className="p-4">
         <div className="flex justify-between items-start mb-1.5">
-          <h3 className="text-[17px] font-bold text-slate-900 leading-tight pr-3 flex-1">
-            {venue.name}
-          </h3>
+          <h3 className="text-[17px] font-bold text-slate-900 leading-tight pr-3 flex-1">{venue.name}</h3>
           {venue.rating && (
             <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-lg shrink-0">
               <Star size={13} className="fill-amber-400 text-amber-400" />
@@ -92,14 +81,25 @@ export default function VenueCard({ venue, isSaved, onToggleSave }: Props) {
           )}
         </div>
 
-        <p className="text-slate-500 text-sm mb-3 line-clamp-1">{venue.vicinity}</p>
+        <p className="text-slate-500 text-sm mb-2.5 line-clamp-1">{venue.vicinity}</p>
 
-        {venue.distance && (
-          <div className="flex items-center gap-1.5 text-sm font-medium text-teal-600">
-            <MapPin size={15} />
-            <span>{venue.distance} away</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {venue.distance && (
+            <div className="flex items-center gap-1 text-sm font-medium text-teal-600">
+              <MapPin size={13} />
+              <span>{venue.distance}</span>
+            </div>
+          )}
+          {badges.length > 0 && venue.distance && (
+            <span className="text-slate-200 text-xs">•</span>
+          )}
+          {badges.map(b => (
+            <span key={b.label} className="text-xs text-slate-500 flex items-center gap-0.5">
+              <span>{b.emoji}</span>
+              <span className="hidden sm:inline">{b.label}</span>
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

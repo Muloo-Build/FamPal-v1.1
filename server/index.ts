@@ -2005,6 +2005,8 @@ const NEW_PLACES_FIELD_MASK = [
   'places.shortFormattedAddress', 'places.location', 'places.rating',
   'places.userRatingCount', 'places.photos', 'places.types',
   'places.currentOpeningHours', 'places.priceLevel',
+  'places.goodForChildren', 'places.menuForChildren', 'places.allowsDogs',
+  'places.accessibilityOptions', 'places.outdoorSeating', 'places.restroom',
 ].join(',');
 
 function priceLevelToNumber(level?: string): number | undefined {
@@ -2029,6 +2031,11 @@ function transformNewPlace(p: any): any {
     photos: (p.photos || []).map((ph: any) => ({ photo_reference: ph.name })),
     opening_hours: p.currentOpeningHours ? { open_now: p.currentOpeningHours.openNow } : undefined,
     price_level: priceLevelToNumber(p.priceLevel),
+    good_for_children: p.goodForChildren ?? false,
+    allows_dogs: p.allowsDogs ?? false,
+    outdoor_seating: p.outdoorSeating ?? false,
+    restroom: p.restroom ?? false,
+    wheelchair_accessible: p.accessibilityOptions?.wheelchairAccessibleEntrance ?? false,
   };
 }
 
@@ -2505,6 +2512,55 @@ app.get('/api/places/photo', placesPhotoRateLimit, async (req, res) => {
   } catch (error) {
     console.error('Places photo proxy error:', (error as any)?.name || 'unknown_error');
     return res.status(500).json({ error: 'Photo proxy failed' });
+  }
+});
+
+// ── FamPals Reviews ───────────────────────────────────────────────────────────
+app.get('/api/reviews/:placeId', async (req, res) => {
+  try {
+    const { placeId } = req.params;
+    if (!isPostgresEnabled) return res.json({ reviews: [] });
+    const result = await pgQuery(
+      'SELECT id, user_id, display_name, rating, body, tags, created_at FROM place_reviews WHERE place_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [placeId]
+    );
+    return res.json({ reviews: result.rows });
+  } catch (err: any) {
+    console.error('Reviews fetch error:', err?.message);
+    return res.status(500).json({ error: 'Failed to fetch reviews' });
+  }
+});
+
+app.post('/api/reviews/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { placeId } = req.params;
+    const { rating, body, tags, displayName } = req.body;
+    const userId = req.uid!;
+    if (!rating || rating < 1 || rating > 5) return res.status(400).json({ error: 'Rating 1–5 required' });
+    await ensurePostgresUserRow(userId);
+    const result = await pgQuery(
+      `INSERT INTO place_reviews (place_id, user_id, display_name, rating, body, tags)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (place_id, user_id) DO UPDATE
+       SET rating = $4, body = $5, tags = $6, updated_at = now()
+       RETURNING id, user_id, display_name, rating, body, tags, created_at`,
+      [placeId, userId, displayName || null, rating, body || null, tags || []]
+    );
+    return res.json({ review: result.rows[0] });
+  } catch (err: any) {
+    console.error('Review save error:', err?.message);
+    return res.status(500).json({ error: 'Failed to save review' });
+  }
+});
+
+app.delete('/api/reviews/:placeId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { placeId } = req.params;
+    const userId = req.uid!;
+    await pgQuery('DELETE FROM place_reviews WHERE place_id = $1 AND user_id = $2', [placeId, userId]);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to delete review' });
   }
 });
 
