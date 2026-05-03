@@ -70,35 +70,57 @@ async function exchangeToken(endpoint: string, body: Record<string, string>): Pr
   return user;
 }
 
+// Renders Google's official sign-in button into a container element.
+// More reliable than prompt() which can be suppressed by browsers.
+export function renderGoogleSignInButton(
+  container: HTMLElement,
+  onSuccess: (user: AuthUser) => void,
+  onError: (err: Error) => void,
+): void {
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    onError(new Error('Google sign-in is not configured. Please use email/password.'));
+    return;
+  }
+
+  const g = (window as any).google;
+  if (!g?.accounts?.id) {
+    onError(new Error('Google Sign-In script not loaded yet. Please try again.'));
+    return;
+  }
+
+  g.accounts.id.initialize({
+    client_id: clientId,
+    callback: async (response: any) => {
+      try {
+        const user = await exchangeToken('/api/auth/google', { idToken: response.credential });
+        onSuccess(user);
+      } catch (err: any) {
+        onError(err);
+      }
+    },
+    cancel_on_tap_outside: false,
+  });
+
+  g.accounts.id.renderButton(container, {
+    theme: 'outline',
+    size: 'large',
+    text: 'continue_with',
+    shape: 'pill',
+    width: container.offsetWidth || 320,
+  });
+}
+
 export async function signInWithGoogle(): Promise<AuthUser> {
   return new Promise((resolve, reject) => {
-    // Use Google Identity Services
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      reject(new Error('VITE_GOOGLE_CLIENT_ID not configured'));
-      return;
-    }
-
-    (window as any).google.accounts.id.initialize({
-      client_id: clientId,
-      callback: async (response: any) => {
-        try {
-          const user = await exchangeToken('/api/auth/google', { idToken: response.credential });
-          resolve(user);
-        } catch (err) {
-          reject(err);
-        }
-      },
-    });
-    (window as any).google.accounts.id.prompt((notification: any) => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        // Fall back to popup
-        (window as any).google.accounts.id.renderButton(
-          document.createElement('div'),
-          {}
-        );
-      }
-    });
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+    document.body.appendChild(container);
+    renderGoogleSignInButton(
+      container,
+      (user) => { document.body.removeChild(container); resolve(user); },
+      (err) => { document.body.removeChild(container); reject(err); },
+    );
   });
 }
 
